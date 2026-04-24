@@ -1,0 +1,15 @@
+__pycache__/
+media/weights
+.env
+media/calibration
+media/capture
+media/new_sku_images
+media/output
+media/Reports
+.vscode
+graphs_output
+Apollo_env
+app.log
+Apollo_App.lnk
+GUI1.py
+run_apollo.bat
