@@ -26,6 +26,8 @@ CAMERA_PIPELINE_MAP = {
     "254701301": "sidewall2",
     "254701300": "innerwall",
     "254701292": "Tread",
+    "254701293": "bead",
+    
 }
 
 BASE_SRC_DIR = Path(__file__).resolve().parents[1]   # .../src
@@ -312,7 +314,7 @@ class NewSKUPage(QWidget):
         self.sku_meta = sku_meta or {}
         self.on_close = on_close
 
-        self.labels = ["SIDE WALL 1", "SIDE WALL 2", "INNER SIDE", "TOP"]
+        self.labels = ["SIDE WALL 1", "SIDE WALL 2", "INNER SIDE", "TOP","BEAD"]
 
         self.img_labels = []
         self.status_lbl = None
@@ -347,6 +349,7 @@ class NewSKUPage(QWidget):
             "254701301": "Side Wall 2",
             "254701300": "Inner Side",
             "254701292": "Top",
+            "254701293": "Bead",
         }
 
         self.active_training_serial = None
@@ -368,7 +371,7 @@ class NewSKUPage(QWidget):
         self.sku_meta = sku_meta or {}
 
     def _preview_serial_order(self):
-        return ["254701283", "254701301", "254701300", "254701292"]
+         return [str(i+1) for i in range(len(self.labels))]
 
     def _ordered_preview_paths(self):
         return [self.latest_preview_paths.get(serial, "") for serial in self._preview_serial_order()]
@@ -378,40 +381,35 @@ class NewSKUPage(QWidget):
             return
 
         self.latest_preview_paths = {}
-        camera_serials = self._preview_serial_order()
+        preview_keys = self._preview_serial_order()  
 
         if os.path.exists(self.raw_dir):
             image_files = []
             for file in os.listdir(self.raw_dir):
                 if file.lower().endswith(IMAGE_EXTS):
                     image_files.append(file)
-
+            
+            
             image_files.sort()
-
-            for idx, serial in enumerate(camera_serials):
+            
+            # Match images by index (1.jpg -> key "1", etc.)
+            for idx, key in enumerate(preview_keys):
                 if idx < len(image_files):
                     image_path = os.path.join(self.raw_dir, image_files[idx])
                     if os.path.exists(image_path):
-                        self.latest_preview_paths[serial] = image_path
-                else:
-                    for file in image_files:
-                        if str(idx + 1) in file or serial in file:
-                            image_path = os.path.join(self.raw_dir, file)
-                            if os.path.exists(image_path):
-                                self.latest_preview_paths[serial] = image_path
-                                break
-
-        if not self.latest_preview_paths and os.path.exists(self.raw_dir):
-            for serial in camera_serials:
-                for file in os.listdir(self.raw_dir):
-                    if serial in file and file.lower().endswith(IMAGE_EXTS):
+                        self.latest_preview_paths[key] = image_path
+            
+            # Also try to match by filename without extension
+            if not self.latest_preview_paths:
+                for file in image_files:
+                    name_without_ext = os.path.splitext(file)[0]
+                    if name_without_ext in preview_keys:
                         image_path = os.path.join(self.raw_dir, file)
-                        if os.path.exists(image_path):
-                            self.latest_preview_paths[serial] = image_path
-                            break
+                        self.latest_preview_paths[name_without_ext] = image_path
 
+        
         self._update_preview_from_latest()
-
+        
         if self.latest_preview_paths:
             self.status_lbl.setText(f"Loaded {len(self.latest_preview_paths)} images from raw folder")
         else:
@@ -588,7 +586,7 @@ class NewSKUPage(QWidget):
         header_row.addLayout(header_left)
         header_row.addStretch(1)
 
-        badge_lbl = QLabel("4 Cameras")
+        badge_lbl = QLabel("5 Cameras")
         badge_lbl.setAlignment(Qt.AlignCenter)
         badge_lbl.setFixedHeight(28)
         badge_lbl.setStyleSheet("""
@@ -612,7 +610,7 @@ class NewSKUPage(QWidget):
 
         self.img_labels = []
 
-        for i in range(4):
+        for i in range(5):
             card = QFrame()
             card.setObjectName("previewCard")
             card.setMinimumSize(260, 560)
@@ -950,7 +948,7 @@ class NewSKUPage(QWidget):
         self.camera_result_labels = {}
         self.camera_status_boxes = {}
 
-        serials = ["254701283", "254701301", "254701300", "254701292"]
+        serials = ["254701283", "254701301", "254701300", "254701292","254701293"]
 
         for idx, serial in enumerate(serials):
             card = QFrame()
@@ -1132,7 +1130,7 @@ class NewSKUPage(QWidget):
 
     def _reset_training_cards(self):
         self.serial_status_state = {}
-        for serial in ["254701283", "254701301", "254701300", "254701292"]:
+        for serial in ["254701283", "254701301", "254701300", "254701292","254701293"]:
             if CAMERA_PIPELINE_MAP.get(serial):
                 self._set_camera_status(serial, "Status: Waiting", "#6f6a7a", "waiting")
             else:
@@ -1268,12 +1266,18 @@ class NewSKUPage(QWidget):
         if not self.latest_preview_paths:
             self.load_raw_images_for_preview()
 
-        preview_paths = self._ordered_preview_paths()
-        while len(preview_paths) < 4:
+        # Get preview paths in correct order
+        preview_paths = []
+        for key in self._preview_serial_order():
+            preview_paths.append(self.latest_preview_paths.get(key, ""))
+        
+        # Ensure we have exactly len(self.labels) items
+        while len(preview_paths) < len(self.labels):
             preview_paths.append("")
 
-        for i in range(4):
-            self.img_labels[i].set_image_path(preview_paths[i])
+        for i in range(len(self.labels)):
+            if i < len(self.img_labels):
+                self.img_labels[i].set_image_path(preview_paths[i])
 
     def refresh_preview_with_raw_load(self):
         if self.capture_in_progress or self.training_in_progress:
@@ -1289,10 +1293,11 @@ class NewSKUPage(QWidget):
 
     def _update_preview_from_latest(self):
         preview_paths = self._ordered_preview_paths()
-        while len(preview_paths) < 4:
+        # Use len(self.labels) instead of hardcoded 4
+        while len(preview_paths) < len(self.labels):
             preview_paths.append("")
 
-        for i in range(4):
+        for i in range(len(self.labels)):  # Use dynamic length
             self.img_labels[i].set_image_path(preview_paths[i])
 
     def confirm_and_start_capture(self):
@@ -1321,7 +1326,7 @@ class NewSKUPage(QWidget):
 
         IMAGES_PER_CAMERA = 20
         GOOD_FOLDER_COUNT = 10
-        EXPECTED_CAMERAS = 4
+        EXPECTED_CAMERAS = 5
 
         sku_name = self._get_sku_name()
         sku_folder = _safe_name(sku_name)

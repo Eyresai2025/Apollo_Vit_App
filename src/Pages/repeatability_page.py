@@ -77,7 +77,7 @@ class RepeatabilityPage(QWidget):
         self.save_root_dir = save_root_dir
         self.on_close = on_close
 
-        self.labels = ["SIDE WALL 1", "SIDE WALL 2", "INNER SIDE", "TOP"]
+        self.labels = ["SIDE WALL 1", "SIDE WALL 2", "INNER SIDE", "TOP", "BEAD"]
         self.img_labels = []
         self.output_label = None
 
@@ -162,17 +162,17 @@ class RepeatabilityPage(QWidget):
         # ======================
         images_wrap = _card()
         images_l = QVBoxLayout(images_wrap)
-        images_l.setContentsMargins(12, 12, 12, 12)
-        images_l.setSpacing(10)
+        images_l.setContentsMargins(8, 8, 8, 8)
+        images_l.setSpacing(6)
 
         row = QHBoxLayout()
-        row.setSpacing(10)
+        row.setSpacing(6)
 
-        for i in range(4):
+        for i in range(len(self.labels)):
             card = _card()
             card_l = QVBoxLayout(card)
-            card_l.setContentsMargins(10, 10, 10, 10)
-            card_l.setSpacing(6)
+            card_l.setContentsMargins(6, 6, 6, 6)
+            card_l.setSpacing(4)
 
             t = QLabel(self.labels[i])
             t.setAlignment(Qt.AlignCenter)
@@ -181,7 +181,7 @@ class RepeatabilityPage(QWidget):
 
             img = QLabel("🖼️")
             img.setAlignment(Qt.AlignCenter)
-            img.setMinimumHeight(430)
+            img.setMinimumHeight(260)
             img.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             img.setStyleSheet("""
                 QLabel {
@@ -195,7 +195,7 @@ class RepeatabilityPage(QWidget):
             card_l.addWidget(img, 1)
             self.img_labels.append(img)
 
-            row.addWidget(card, 1)
+            row.addWidget(card)
 
         images_l.addLayout(row)
         root.addWidget(images_wrap, 1)
@@ -411,8 +411,12 @@ class RepeatabilityPage(QWidget):
         out_dir = _ensure_dir(os.path.join(self.save_root_dir, "Repeatability", run_id))
 
         paths = _latest_n_images(self.raw_dir, 4)
+
         while len(paths) < 4:
             paths.append(None)
+
+        # BEAD = TOP
+        paths.append(paths[3] if len(paths) >= 4 else None)
 
         saved = []
         for p, lab in zip(paths, self.labels):
@@ -453,6 +457,7 @@ class RepeatabilityPage(QWidget):
                 "sidewall2": saved[1],
                 "inner": saved[2],
                 "top": saved[3],
+                "bead": saved[4],
             },
             "created_at": datetime.utcnow(),
         })
@@ -475,7 +480,15 @@ class RepeatabilityPage(QWidget):
 
     def refresh_preview_only(self):
         paths = _latest_n_images(self.raw_dir, 4)
+
+        # Ensure 4 base images exist
         while len(paths) < 4:
+            paths.append(None)
+
+        # 👉 Add BEAD = same as TOP (index 3)
+        if len(paths) >= 4:
+            paths.append(paths[3])  # BEAD uses TOP image
+        else:
             paths.append(None)
 
         for i, p in enumerate(paths):

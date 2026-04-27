@@ -1,6 +1,5 @@
 __pycache__/
 media/weights
-.env
 media/calibration
 media/capture
 media/new_sku_images
