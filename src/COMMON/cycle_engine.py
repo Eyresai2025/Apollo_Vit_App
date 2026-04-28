@@ -35,7 +35,7 @@ try:
     from src.models.Pipeline.vit_trt_inference import TRTViTFeatureExtractor
 except Exception:
     try:
-        from vit_trt_inference import TRTViTFeatureExtractor
+        from src.models.Pipeline.vit_trt_inference import TRTViTFeatureExtractor
     except Exception:
         TRTViTFeatureExtractor = None
 

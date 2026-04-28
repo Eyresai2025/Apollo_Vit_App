@@ -39,7 +39,7 @@ from snap7 import Client # type: ignore
 ####Local files imports
 from src.camera.cam_connections import LineScanCamera
 from src.models.Pipeline.R_Detection_align_crop import build_r_detector
-from src.Maincycle import run_capture_folder_cycle, preload_live_runtimes, CAMERA_CAPTURE_ENABLED
+from src.Main_cam import run_capture_folder_cycle, preload_live_runtimes, CAMERA_CAPTURE_ENABLED, start_continuous_cycle
 from src.COMMON.db import get_db
 
 os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
@@ -216,9 +216,18 @@ def disconnect_plc():
         plc_client = None
 
 # Camera initialization
+# REPLACE:
 if deployment == "True":
     connect_plc()
     from src.camera.cam_connections import MultiCameraManager
+    ...
+    multi_cam = MultiCameraManager()
+    multi_cam.connect_all()
+
+# WITH:
+if deployment == "True":
+    connect_plc()
+    from src.camera.HARDWARE_TRIGGER import MultiCameraManager
     logger.info("="*50)
     logger.info("Initializing Apollo Inspection System — 5 cameras")
     logger.info("="*50)
@@ -228,7 +237,6 @@ if deployment == "True":
         logger.info(f"✅ {len(multi_cam.cameras)} cameras connected and configured")
     except Exception as e:
         logger.error(f"❌ Camera initialization failed: {e}")
-        logger.info("   Check camera connections and power.")
         multi_cam = None
     logger.info("="*50)
 else:
@@ -679,6 +687,8 @@ class MainWindow(QMainWindow):
         self.current_preloaded_sku = None
         self.inspection = None
         self.multi_cam = multi_cam
+        self.continuous_worker = None
+        self.is_continuous_running = False
         
         self.side_order = [
             ("sidewall1", "Side Wall 1"),
@@ -1207,21 +1217,92 @@ class MainWindow(QMainWindow):
         
         dialog.exec_()
     
+    # REPLACE ENTIRE METHOD:
     def begin_live_flow(self, sku_name, tyre_name):
-        # Check if already running
-        if self.thread_manager.active_threads.get("inspection"):
-            if self.thread_manager.active_threads["inspection"].isRunning():
-                QMessageBox.information(self, "Live Inspection", "Live inspection is already running.")
-                return
+        """Start live inspection based on deployment mode"""
+        self.update_live_info_cards(sku_name, tyre_name)
         
-        if self.current_preloaded_sku == sku_name:
-            self.start_live_inspection(sku_name=sku_name, tyre_name=tyre_name)
+        if deployment == "True" and CAMERA_CAPTURE_ENABLED:
+            # CAMERA MODE: Continuous PLC/Hardware monitored inspection
+            self.start_continuous_inspection(sku_name, tyre_name)
+        else:
+            # DEMO MODE: Original single-cycle inspection
+            if self.thread_manager.active_threads.get("inspection"):
+                if self.thread_manager.active_threads["inspection"].isRunning():
+                    QMessageBox.information(self, "Live Inspection", "Live inspection is already running.")
+                    return
+            
+            if self.current_preloaded_sku == sku_name:
+                self.start_live_inspection(sku_name=sku_name, tyre_name=tyre_name)
+                return
+            
+            self.pending_live_start = True
+            self.pending_live_sku = sku_name
+            self.pending_live_tyre_name = tyre_name
+            self.start_runtime_preload(sku_name=sku_name)
+
+    def start_continuous_inspection(self, sku_name, tyre_name):
+        """Start continuous PLC/Hardware monitored inspection"""
+        if self.is_continuous_running:
+            QMessageBox.information(self, "Live Inspection", "Continuous inspection already running.")
             return
         
-        self.pending_live_start = True
-        self.pending_live_sku = sku_name
-        self.pending_live_tyre_name = tyre_name
-        self.start_runtime_preload(sku_name=sku_name)
+        if self.multi_cam is None:
+            QMessageBox.critical(self, "Camera Error", "Cameras not initialized.")
+            return
+        
+        self.stop_continuous_inspection()
+        
+        self.continuous_worker = start_continuous_cycle(
+            media_root=MEDIA_PATH,
+            sku_name=sku_name,
+            tyre_name=tyre_name,
+            multi_camera_manager=self.multi_cam,
+            plc_interface=plc_client,
+            plc_trigger_tag="DB100.DBX0.0",
+            min_capture_interval=2.0,
+            seg_model_a_path=MAIN_SEG_MODEL_PATH,
+            seg_model_b_path=MAIN_SEG_MODEL_PATH,
+            vit_checkpoint_path=MAIN_VIT_CHECKPOINT_PATH,
+            r_detector_path=MAIN_R_DETECTOR_PATH,
+            device="cuda" if TORCH_GPU_OK else "cpu",
+            auto_preload=True,
+        )
+        
+        self.continuous_worker.status_update.connect(
+            lambda msg: self.statusBar().showMessage(msg)
+        )
+        self.continuous_worker.processing_completed.connect(self._on_continuous_completed)
+        self.continuous_worker.processing_error.connect(
+            lambda err: logger.error(f"Continuous error: {err}")
+        )
+        
+        self.thread_manager.start_thread(
+            "continuous_cycle",
+            self.continuous_worker,
+            on_finished=lambda: setattr(self, 'is_continuous_running', False),
+            on_error=lambda err: setattr(self, 'is_continuous_running', False)
+        )
+        
+        self.is_continuous_running = True
+        self.statusBar().showMessage(f"🔄 Continuous inspection | SKU={sku_name} | Monitoring trigger...")
+
+
+    def stop_continuous_inspection(self):
+        """Stop continuous inspection"""
+        if self.continuous_worker:
+            self.continuous_worker.stop()
+            self.is_continuous_running = False
+
+
+    def _on_continuous_completed(self, result):
+        """Called when each AI pipeline cycle completes"""
+        self._mark_ui_active()
+        cycle_id = result.get('cycle_id', 'Unknown')
+        final_label = result.get('final_label', 'Unknown')
+        self.statusBar().showMessage(f"✅ {cycle_id} | Result: {final_label}")
+        self.update_label_async()
+        QTimer.singleShot(700, self.refresh_cycle_images_async)
     
     def start_runtime_preload(self, sku_name=None):
         sku_name = (sku_name or "").strip()
@@ -2066,10 +2147,11 @@ class MainWindow(QMainWindow):
         if self.back_btn:
             self.back_btn.setVisible(True)
     
+
     def closeEvent(self, event):
-        """Clean shutdown with proper resource release"""
         logger.info("Application closing - cleaning up...")
         try:
+            self.stop_continuous_inspection()  
             self.update_timer.stop()
             self.update_label_timer.stop()
             self.update_images_timer.stop()
@@ -2084,7 +2166,6 @@ class MainWindow(QMainWindow):
 # ============================================================================
 # CLEANUP AND MAIN
 # ============================================================================
-
 def cleanup_camera_resources():
     global multi_cam
     logger.info("Cleaning up resources...")
