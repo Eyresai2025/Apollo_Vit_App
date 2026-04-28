@@ -121,7 +121,7 @@ class ContinuousCycleWorker(QObject):
         plc_connection_was_ok = False
         
         self.status_update.emit("=" * 50)
-        self.status_update.emit("🚀 Starting Continuous Inspection System")
+        self.status_update.emit(" Starting Continuous Inspection System")
         self.status_update.emit(f"   Trigger Mode: {TRIGGER_MODE.upper()}")
         self.status_update.emit(f"   SKU: {self.sku_name}")
         self.status_update.emit(f"   Tyre: {self.tyre_name}")
@@ -140,14 +140,14 @@ class ContinuousCycleWorker(QObject):
         if hasattr(self.multi_camera_manager, 'start_all_streams'):
             self.multi_camera_manager.start_all_streams()
             if self.is_hardware:
-                self.status_update.emit("✅ Camera streams started - waiting for HARDWARE triggers")
+                self.status_update.emit(" Camera streams started - waiting for HARDWARE triggers")
             else:
-                self.status_update.emit("✅ Camera streams started - waiting for PLC triggers")
+                self.status_update.emit(" Camera streams started - waiting for PLC triggers")
         
         if self.is_hardware:
-            self.status_update.emit("⏳ Waiting for hardware trigger signal...")
+            self.status_update.emit(" Waiting for hardware trigger signal...")
         else:
-            self.status_update.emit(f"⏳ Monitoring PLC tag: {self.plc_trigger_tag}")
+            self.status_update.emit(f" Monitoring PLC tag: {self.plc_trigger_tag}")
             self.status_update.emit("   Waiting for rising edge trigger...")
         
         # MAIN LOOP
@@ -167,9 +167,9 @@ class ContinuousCycleWorker(QObject):
                         plc_connection_was_ok = plc_ok
                         self.plc_status.emit(plc_ok)
                         if plc_ok:
-                            self.status_update.emit("✅ PLC connection OK")
+                            self.status_update.emit(" PLC connection OK")
                         else:
-                            self.status_update.emit("⚠️  PLC not connected - waiting...")
+                            self.status_update.emit("  PLC not connected - waiting...")
                     
                     trigger_value = self._read_plc_tag()
                     
@@ -187,7 +187,7 @@ class ContinuousCycleWorker(QObject):
                     
                     self.status_update.emit("")
                     trigger_type = "HARDWARE" if self.is_hardware else "PLC"
-                    self.status_update.emit(f"⚡ ═══ {trigger_type} TRIGGER #{capture_count} ═══")
+                    self.status_update.emit(f" ═══ {trigger_type} TRIGGER #{capture_count} ═══")
                     self.status_update.emit(f"   Time: {timestamp}")
                     self.capture_started.emit(timestamp)
                     
@@ -196,21 +196,21 @@ class ContinuousCycleWorker(QObject):
                     if capture_success:
                         last_capture_time = time.time()
                     else:
-                        self.status_update.emit("⚠️  Capture skipped or failed")
+                        self.status_update.emit("  Capture skipped or failed")
                 
                 if not self.is_hardware:
                     time.sleep(0.01)
                     
             except Exception as e:
                 error_msg = f"Continuous cycle error: {e}"
-                self.status_update.emit(f"❌ {error_msg}")
+                self.status_update.emit(f" {error_msg}")
                 self.processing_error.emit(error_msg)
                 traceback.print_exc()
                 time.sleep(1)
         
         self._cleanup()
         self._is_running = False
-        self.status_update.emit("✅ Continuous cycle stopped")
+        self.status_update.emit(" Continuous cycle stopped")
         self.finished.emit()
     
     def _check_plc_connection(self) -> bool:
@@ -264,7 +264,7 @@ class ContinuousCycleWorker(QObject):
     def _preload_runtimes(self):
         """Preload AI runtimes"""
         try:
-            self.status_update.emit("🔄 Preloading AI models...")
+            self.status_update.emit(" Preloading AI models...")
             
             self._runtimes = build_all_runtimes(
                 sku_name=self.sku_name,
@@ -297,11 +297,11 @@ class ContinuousCycleWorker(QObject):
             )
             
             self._runtimes_preloaded = True
-            self.status_update.emit("✅ AI models preloaded successfully")
+            self.status_update.emit(" AI models preloaded successfully")
             
         except Exception as e:
             self._runtimes_preloaded = False
-            self.status_update.emit(f"⚠️  Runtime preload failed: {e}")
+            self.status_update.emit(f"  Runtime preload failed: {e}")
     
     def _get_or_load_runtimes(self):
         """Get cached runtimes or load them"""
@@ -313,12 +313,12 @@ class ContinuousCycleWorker(QObject):
     def _execute_capture(self, capture_count: int, timestamp: str) -> bool:
         """Execute a complete capture + process cycle"""
         try:
-            self.status_update.emit(f"📸 Capturing images from {len(self.multi_camera_manager.cameras)} cameras...")
+            self.status_update.emit(f" Capturing images from {len(self.multi_camera_manager.cameras)} cameras...")
             
             images = self.multi_camera_manager.capture_all()
             
             if not images or not any(img is not None for img in images.values()):
-                self.status_update.emit("❌ Capture failed - no images received")
+                self.status_update.emit(" Capture failed - no images received")
                 self.processing_error.emit("No images captured")
                 return False
             
@@ -327,13 +327,13 @@ class ContinuousCycleWorker(QObject):
             self.capture_completed.emit(images)
             
             cycle_capture_dir, cycle_id = build_cycle_capture_dir(self.media_root)
-            self.status_update.emit(f"📁 Cycle directory: {cycle_id}")
+            self.status_update.emit(f" Cycle directory: {cycle_id}")
             
-            self.status_update.emit("💾 Saving images...")
+            self.status_update.emit(" Saving images...")
             image_map = self._save_images_to_cycle(images, cycle_capture_dir)
             
             if not image_map:
-                self.status_update.emit("❌ No images saved to cycle directory")
+                self.status_update.emit(" No images saved to cycle directory")
                 self.processing_error.emit("Failed to save images")
                 return False
             
@@ -341,7 +341,7 @@ class ContinuousCycleWorker(QObject):
             self.status_update.emit(f"   Saved {len(image_map)} sides: {', '.join(image_map.keys())}")
             
             self.processing_started.emit(cycle_id)
-            self.status_update.emit(f"🤖 Starting AI pipeline for {cycle_id}...")
+            self.status_update.emit(f" Starting AI pipeline for {cycle_id}...")
             
             result = self._run_ai_pipeline(image_map, cycle_id, cycle_capture_dir)
             
@@ -351,12 +351,12 @@ class ContinuousCycleWorker(QObject):
                 cycle_time = result.get('cycle_latency_sec', 0)
                 
                 self.status_update.emit("")
-                self.status_update.emit(f"✅ ═══ CYCLE #{capture_count} COMPLETE ═══")
+                self.status_update.emit(f" ═══ CYCLE #{capture_count} COMPLETE ═══")
                 self.status_update.emit(f"   Cycle ID: {cycle_id}")
                 self.status_update.emit(f"   Result: {final_label}")
                 self.status_update.emit(f"   Time: {cycle_time:.2f}s")
                 self.status_update.emit("─" * 40)
-                self.status_update.emit("⏳ Waiting for next trigger...")
+                self.status_update.emit(" Waiting for next trigger...")
             else:
                 self.processing_error.emit("AI pipeline returned no result")
                 return False
@@ -365,7 +365,7 @@ class ContinuousCycleWorker(QObject):
             
         except Exception as e:
             error_msg = f"Capture cycle error: {e}"
-            self.status_update.emit(f"❌ {error_msg}")
+            self.status_update.emit(f" {error_msg}")
             self.processing_error.emit(error_msg)
             traceback.print_exc()
             return False
@@ -378,7 +378,7 @@ class ContinuousCycleWorker(QObject):
         
         for serial, img_array in images.items():
             if img_array is None:
-                self.status_update.emit(f"   ⚠️  No image from camera {serial}")
+                self.status_update.emit(f"     No image from camera {serial}")
                 continue
             
             side_name = self.camera_to_side.get(str(serial))
@@ -390,7 +390,7 @@ class ContinuousCycleWorker(QObject):
                         break
             
             if side_name is None or side_name not in self.sides_to_run:
-                self.status_update.emit(f"   ⚠️  Unknown camera serial: {serial}")
+                self.status_update.emit(f"     Unknown camera serial: {serial}")
                 side_name = f"camera_{serial}"
             
             side_dir = os.path.join(cycle_dir, side_name)
@@ -421,10 +421,10 @@ class ContinuousCycleWorker(QObject):
                 if os.path.exists(img_path):
                     image_map[side_name] = img_path
                     file_size = os.path.getsize(img_path) / 1024
-                    self.status_update.emit(f"   ✅ {side_name} saved ({img_array.shape}, {file_size:.1f}KB)")
+                    self.status_update.emit(f"    {side_name} saved ({img_array.shape}, {file_size:.1f}KB)")
                     
             except Exception as e:
-                self.status_update.emit(f"   ❌ Error saving {side_name}: {e}")
+                self.status_update.emit(f"    Error saving {side_name}: {e}")
         
         return image_map
     
@@ -503,7 +503,7 @@ class ContinuousCycleWorker(QObject):
     
     def stop(self):
         """Signal the worker to stop"""
-        self.status_update.emit("🛑 Stop signal received...")
+        self.status_update.emit(" Stop signal received...")
         self._stop_event.set()
     
     def is_running(self) -> bool:

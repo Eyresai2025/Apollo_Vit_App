@@ -174,7 +174,7 @@ class LineScanCamera:
         devices      = system.create_device()
         self.device  = self._select_device(devices)
         self.nodemap = self.device.nodemap
-        print(f"✅ [{self.serial_number}] Camera connected")
+        print(f" [{self.serial_number}] Camera connected")
 
         self._set_node("Width",                   self.width)
         self._set_node("Height",                  self.camera_height)
@@ -190,7 +190,7 @@ class LineScanCamera:
 
         self.is_streaming = False
         self.is_connected = True
-        print(f"✅ [{self.serial_number}] Camera configured ({self.trigger_mode} trigger)")
+        print(f" [{self.serial_number}] Camera configured ({self.trigger_mode} trigger)")
 
     def start_stream(self):
         """Start streaming (for both modes)"""
@@ -201,7 +201,7 @@ class LineScanCamera:
             return
 
         mode_str = "HARDWARE trigger (waiting for signal)" if self.trigger_mode == "hardware" else "SOFTWARE trigger (continuous)"
-        print(f"🚀 [{self.serial_number}] Starting stream - {mode_str}...")
+        print(f" [{self.serial_number}] Starting stream - {mode_str}...")
         self.device.start_stream(self.num_stream_buffers)
         self.is_streaming = True
         self._stop_event.clear()
@@ -246,7 +246,7 @@ class LineScanCamera:
                 finally:
                     self.device.requeue_buffer(buffer)
 
-            print(f"✅ [{self.serial_number}] Stitch complete: {full_img.shape}")
+            print(f" [{self.serial_number}] Stitch complete: {full_img.shape}")
             return self.serial_number, full_img
 
     def stop_stream(self):
@@ -256,19 +256,19 @@ class LineScanCamera:
                 self._stop_event.set()
                 self.device.stop_stream()
                 self.is_streaming = False
-                print(f"✅ [{self.serial_number}] Stream stopped")
+                print(f" [{self.serial_number}] Stream stopped")
             except Exception as e:
                 print(f"[WARN] [{self.serial_number}] Error stopping stream: {e}")
 
     def stop_and_close(self):
-        print(f"🛑 [{self.serial_number}] Closing camera…")
+        print(f" [{self.serial_number}] Closing camera…")
         self.stop_stream()
         self.is_connected = False
         self.device       = None
         self.nodemap      = None
         try:
             system.destroy_device()
-            print(f"✅ [{self.serial_number}] Camera destroyed")
+            print(f" [{self.serial_number}] Camera destroyed")
         except Exception as e:
             print(f"[WARN] [{self.serial_number}] destroy_device: {e}")
 
@@ -309,7 +309,7 @@ class MultiCameraManager:
         print(f"{'='*50}")
         for cam in self.cameras:
             cam.connect_and_configure()
-        print("✅ All cameras connected.\n")
+        print("All cameras connected.\n")
 
     def start_all_streams(self):
         """Start streams on all cameras"""
@@ -323,7 +323,7 @@ class MultiCameraManager:
         for cam in self.cameras:
             cam.start_stream()
         self._streams_started = True
-        print("✅ All camera streams started.\n")
+        print("All camera streams started.\n")
 
     def stop_all_streams(self):
         """Stop streams on all cameras"""
@@ -333,7 +333,7 @@ class MultiCameraManager:
         for cam in self.cameras:
             cam.stop_stream()
         self._streams_started = False
-        print("✅ All camera streams stopped.\n")
+        print("All camera streams stopped.\n")
 
     def capture_all(self) -> Dict[str, np.ndarray]:
         """
@@ -354,10 +354,10 @@ class MultiCameraManager:
                     serial, img = future.result()
                     results[serial] = img
                     if img is not None:
-                        print(f"✅ [{serial}] image ready — shape {img.shape}")
+                        print(f" [{serial}] image ready — shape {img.shape}")
                 except Exception:
                     results[cam.serial_number] = None
-                    print(f"❌ [{cam.serial_number}] capture FAILED:")
+                    print(f" [{cam.serial_number}] capture FAILED:")
                     traceback.print_exc()
 
         return results
@@ -370,4 +370,4 @@ class MultiCameraManager:
         self.stop_all_streams()
         for cam in self.cameras:
             cam.stop_and_close()
-        print("✅ All cameras closed.\n")
+        print(" All cameras closed.\n")
