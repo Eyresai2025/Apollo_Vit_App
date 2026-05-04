@@ -220,9 +220,9 @@ class LineScanCamera:
             current_row = 0
 
             if self.trigger_mode == "hardware":
-                print(f"📸 [{self.serial_number}] Waiting for HARDWARE trigger signal...")
+                print(f" [{self.serial_number}] Waiting for HARDWARE trigger signal...")
             else:
-                print(f"📸 [{self.serial_number}] Capturing stitched image...")
+                print(f" [{self.serial_number}] Capturing stitched image...")
 
             while current_row < self.final_height:
                 if self._stop_event.is_set():

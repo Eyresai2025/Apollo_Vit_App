@@ -38,6 +38,7 @@ from snap7 import Client # type: ignore
 
 ####Local files imports
 from src.camera.cam_connections import LineScanCamera
+from src.camera.HARDWARE_TRIGGER import MultiCameraManager
 from src.models.Pipeline.R_Detection_align_crop import build_r_detector
 from src.Main_cam import run_capture_folder_cycle, preload_live_runtimes, CAMERA_CAPTURE_ENABLED, start_continuous_cycle
 from src.COMMON.db import get_db
@@ -216,18 +217,10 @@ def disconnect_plc():
         plc_client = None
 
 # Camera initialization
-# REPLACE:
-if deployment == "True":
-    connect_plc()
-    from src.camera.cam_connections import MultiCameraManager
-    ...
-    multi_cam = MultiCameraManager()
-    multi_cam.connect_all()
 
 # WITH:
 if deployment == "True":
     connect_plc()
-    from src.camera.HARDWARE_TRIGGER import MultiCameraManager
     logger.info("="*50)
     logger.info("Initializing Apollo Inspection System — 5 cameras")
     logger.info("="*50)
