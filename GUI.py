@@ -37,11 +37,36 @@ from pathlib import Path
 from snap7 import Client # type: ignore
 
 ####Local files imports
-from src.camera.cam_connections import LineScanCamera
-from src.camera.HARDWARE_TRIGGER import MultiCameraManager
 from src.models.Pipeline.R_Detection_align_crop import build_r_detector
 from src.Main_cam import run_capture_folder_cycle, preload_live_runtimes, CAMERA_CAPTURE_ENABLED, start_continuous_cycle
 from src.COMMON.db import get_db
+from src.COMMON.system_check import show_startup_system_popup
+from src.COMMON.full_hardware_check import is_hardware_ready, get_hardware_state
+from src.COMMON.component_health_service import ComponentHealthService
+from src.UI.component_health_ui import apply_component_health_to_gui
+from src.Pages.axis_status_page import AxisStatusPage
+from src.COMMON.live_inspection_state import (
+    reset_live_progress,
+    set_live_progress,
+    get_live_progress,
+)
+from src.UI.live_progress_ui import (
+    create_live_progress_widget,
+    apply_live_progress_to_gui,
+)
+from src.COMMON.live_result_state import (
+    reset_live_result,
+    update_live_result_from_cycle_result,
+    set_live_result_plc_output,
+    set_live_result_failed,
+)
+
+from src.COMMON.plc_result_sender import send_tyre_result_to_plc
+from src.Pages.device_page import DevicePage
+from src.UI.live_result_ui import (
+    create_tyre_result_summary_widget,
+    apply_tyre_result_to_gui,
+)
 
 os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
 os.environ["QT_DEVICE_PIXEL_RATIO"] = "0"
@@ -53,7 +78,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('app.log'),
+        logging.FileHandler('app.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -171,71 +196,16 @@ def _load_onnx_r_with_fallback(onnx_rel_path, label="R-detect ONNX", conf=0.3):
         logger.error(f"Failed to load {label} from {full_path}: {e}")
         return None, full_path
 
-# --- Load models with CPU-safe fallback ---
-shared_r_detector_onnx, shared_r_detector_onnx_path = _load_onnx_r_with_fallback(
-    weight_path_re_onnx, label="R-detect ONNX", conf=0.3,
-)
-logger.info("All Models loading step completed (with CPU/GPU fallback).")
+# Runtime objects are loaded only after Live SKU selection
+shared_r_detector_onnx = None
+shared_r_detector_onnx_path = None
 
-# ---------------- PLC SETUP ----------------
+logger.info("Startup completed without AI model loading.")
+
+multi_cam = None
 plc_client = None
 
-def connect_plc():
-    global plc_client
-    dep = str(deployment) == "True"
-    if not dep:
-        logger.info("PLC not connected because DEPLOYMENT is False")
-        return None
-    if not plc_ip:
-        logger.info("PLC not connected because PLC_IP is missing in .env")
-        return None
-    try:
-        plc_client = Client()
-        logger.info(f"Connecting to PLC at {plc_ip}...")
-        plc_client.connect(plc_ip, 0, 1)
-        if plc_client.get_connected():
-            logger.info("PLC CONNECTED")
-            return plc_client
-        else:
-            logger.error("PLC connection failed")
-            plc_client = None
-            return None
-    except Exception as e:
-        logger.error(f"PLC connection failed: {e}")
-        plc_client = None
-        return None
-
-def disconnect_plc():
-    global plc_client
-    try:
-        if plc_client is not None and plc_client.get_connected():
-            plc_client.disconnect()
-            logger.info("PLC disconnected")
-    except Exception as e:
-        logger.error(f"PLC disconnect error: {e}")
-    finally:
-        plc_client = None
-
-# Camera initialization
-
-# WITH:
-if deployment == "True":
-    connect_plc()
-    logger.info("="*50)
-    logger.info("Initializing Apollo Inspection System — 5 cameras")
-    logger.info("="*50)
-    try:
-        multi_cam = MultiCameraManager()
-        multi_cam.connect_all()
-        logger.info(f"✅ {len(multi_cam.cameras)} cameras connected and configured")
-    except Exception as e:
-        logger.error(f"❌ Camera initialization failed: {e}")
-        multi_cam = None
-    logger.info("="*50)
-else:
-    logger.info("Cameras not initialized — running in local/demo mode")
-    logger.info("PLC not connected because DEPLOYMENT is False")
-    multi_cam = None
+logger.info("Startup completed without PLC/camera/laser initialization.")
 
 # ============================================================================
 # THREAD MANAGER - Proper QThread Lifecycle Management
@@ -675,6 +645,9 @@ class MainWindow(QMainWindow):
         self.action_plan_page = None
         self.test_mode_page = None
         self.new_sku_page = None
+        self.axis_status_page = None
+        self.device_page = None
+        self._last_stack_widget = None
         self.available_skus = []
         self.pending_preload_sku = None
         self.current_preloaded_sku = None
@@ -702,13 +675,26 @@ class MainWindow(QMainWindow):
         # Setup UI
         self.setup_ui()
         self.load_startup_images()
-        
+        QTimer.singleShot(
+            800,
+            lambda: show_startup_system_popup(
+                self,
+                MEDIA_PATH,
+                ENV_PATH,
+            )
+        )
         self.available_skus = get_available_sku_names(MEDIA_PATH)
         self.selected_live_sku = ""
         self.selected_live_tyre_name = ""
         self.pending_live_start = False
         self.pending_live_sku = None
         self.pending_live_tyre_name = None
+
+        # Lightweight Live Page component health service
+        self.component_health_service = ComponentHealthService(
+            media_path=MEDIA_PATH,
+            env_path=ENV_PATH,
+        )
         
         # Initial delayed refresh
         QTimer.singleShot(1200, self.refresh_cycle_images_async)
@@ -730,6 +716,27 @@ class MainWindow(QMainWindow):
         self._freeze_monitor = QTimer(self)
         self._freeze_monitor.timeout.connect(self._check_ui_responsiveness)
         self._freeze_monitor.start(3000)
+
+        # Lightweight component health monitor
+        # Safe during inspection: no reconnect, no camera configure, no AI loading
+        self.health_timer = QTimer(self)
+        self.health_timer.timeout.connect(self.refresh_component_health)
+        self.health_timer.start(int(env_vars.get("HEALTH_MONITOR_INTERVAL_MS", "5000")))
+
+        # Lightweight live inspection progress monitor
+        # Reads only memory state, no hardware access
+        self.live_progress_timer = QTimer(self)
+        self.live_progress_timer.timeout.connect(
+            lambda: apply_live_progress_to_gui(self)
+        )
+        self.live_progress_timer.start(500)
+
+        reset_live_progress(total_images=len(self.side_order))
+        QTimer.singleShot(1000, lambda: apply_live_progress_to_gui(self))
+        reset_live_result()
+        QTimer.singleShot(1000, lambda: apply_tyre_result_to_gui(self))
+
+        QTimer.singleShot(1500, self.refresh_component_health)
         
         # ---------- BOTTOM MARQUEE COPYRIGHT BAR ----------
         status_bar = QStatusBar()
@@ -763,40 +770,80 @@ class MainWindow(QMainWindow):
         current_time = time.time()
         time_since_update = current_time - self._last_ui_update
         if time_since_update > 5.0:
-            logger.warning(f"⚠️ UI may be frozen! Last update: {time_since_update:.1f}s ago")
+            logger.warning(f"UI may be frozen! Last update: {time_since_update:.1f}s ago")
         self._last_ui_update = current_time
     
     def _mark_ui_active(self):
         """Mark that UI thread is alive"""
         self._last_ui_update = time.time()
     
+    def refresh_component_health(self):
+        """
+        Lightweight Live Page health refresh.
+
+        Safe during inspection:
+        - no camera reconnect
+        - no camera reconfigure
+        - no laser reconnect
+        - no AI loading
+        """
+
+        try:
+            if not hasattr(self, "component_health_service"):
+                return
+
+            inspection_running = bool(
+                getattr(self, "is_continuous_running", False)
+                or (
+                    self.thread_manager.active_threads.get("inspection")
+                    and self.thread_manager.active_threads["inspection"].isRunning()
+                )
+            )
+
+            health = self.component_health_service.get_health(
+                inspection_running=inspection_running
+            )
+
+            apply_component_health_to_gui(self, health)
+
+        except Exception as e:
+            logger.debug(f"[HEALTH] refresh failed: {e}")
     # ========================================================================
     # ASYNC LABEL UPDATE (Non-blocking DB query)
     # ========================================================================
-    
+
     def update_label_async(self):
-        """Update label count without blocking UI"""
+        """
+        Safe tyre count update.
+        This will not freeze the GUI if MongoDB is not running.
+        """
+
         def do_query():
             try:
                 currentdate = datetime.now().strftime("%d-%m-%Y")
-                cnt = tyre_details_col.count_documents({"inspectionDate": currentdate})
+                cnt = tyre_details_col.count_documents(
+                    {"inspectionDate": currentdate},
+                    maxTimeMS=1000
+                )
                 return cnt
             except Exception as e:
-                logger.error(f"Error updating label: {e}")
+                logger.warning(f"MongoDB count unavailable: {e}")
                 return 0
-        
-        # Run query in thread pool and update UI when done
-        def update_ui():
-            try:
-                cnt = do_query()
-                if self.label_count:
-                    self.label_count.setText(str(cnt))
-            except Exception as e:
-                if self.label_count:
-                    self.label_count.setText("0")
-        
-        QTimer.singleShot(0, update_ui)
-    
+
+        def worker():
+            cnt = do_query()
+
+            def update_ui():
+                try:
+                    if self.label_count:
+                        self.label_count.setText(str(cnt))
+                except Exception:
+                    pass
+
+            QTimer.singleShot(0, update_ui)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def update_label(self):
         """Sync version - deprecated, use update_label_async instead"""
         self.update_label_async()
@@ -1214,21 +1261,35 @@ class MainWindow(QMainWindow):
     def begin_live_flow(self, sku_name, tyre_name):
         """Start live inspection based on deployment mode"""
         self.update_live_info_cards(sku_name, tyre_name)
-        
+
+        if str(deployment) == "True" and not is_hardware_ready():
+            QMessageBox.warning(
+                self,
+                "Test Mode Required",
+                "Please open Test Mode and complete the Full Hardware Check before starting Live Inspection."
+            )
+            return
+
+        hardware_state = get_hardware_state()
+
+        if hardware_state.get("multi_cam") is not None:
+            self.multi_cam = hardware_state.get("multi_cam")
+
+        globals()["multi_cam"] = hardware_state.get("multi_cam")
+        globals()["plc_client"] = hardware_state.get("plc_client")
+
         if deployment == "True" and CAMERA_CAPTURE_ENABLED:
-            # CAMERA MODE: Continuous PLC/Hardware monitored inspection
             self.start_continuous_inspection(sku_name, tyre_name)
         else:
-            # DEMO MODE: Original single-cycle inspection
             if self.thread_manager.active_threads.get("inspection"):
                 if self.thread_manager.active_threads["inspection"].isRunning():
                     QMessageBox.information(self, "Live Inspection", "Live inspection is already running.")
                     return
-            
+
             if self.current_preloaded_sku == sku_name:
                 self.start_live_inspection(sku_name=sku_name, tyre_name=tyre_name)
                 return
-            
+
             self.pending_live_start = True
             self.pending_live_sku = sku_name
             self.pending_live_tyre_name = tyre_name
@@ -1278,6 +1339,19 @@ class MainWindow(QMainWindow):
         )
         
         self.is_continuous_running = True
+        reset_live_result()
+        apply_tyre_result_to_gui(self)
+
+        reset_live_progress(total_images=len(self.side_order))
+        set_live_progress(
+            phase="WAITING",
+            active_zone="-",
+            images_captured=0,
+            total_images=len(self.side_order),
+            message="Continuous inspection started. Waiting for trigger.",
+        )
+        apply_live_progress_to_gui(self)
+
         self.statusBar().showMessage(f"🔄 Continuous inspection | SKU={sku_name} | Monitoring trigger...")
 
 
@@ -1287,12 +1361,45 @@ class MainWindow(QMainWindow):
             self.continuous_worker.stop()
             self.is_continuous_running = False
 
+        set_live_progress(
+            phase="WAITING",
+            active_zone="-",
+            images_captured=0,
+            total_images=len(self.side_order),
+            message="Continuous inspection stopped",
+        )
+        apply_live_progress_to_gui(self)
+
 
     def _on_continuous_completed(self, result):
         """Called when each AI pipeline cycle completes"""
         self._mark_ui_active()
+
         cycle_id = result.get('cycle_id', 'Unknown')
         final_label = result.get('final_label', 'Unknown')
+
+        set_live_progress(
+            phase="COMPLETED",
+            active_zone="All Zones",
+            images_captured=len(self.side_order),
+            total_images=len(self.side_order),
+            message=f"Cycle completed: {final_label}",
+        )
+        apply_live_progress_to_gui(self)
+
+        summary = update_live_result_from_cycle_result(
+            result,
+            total_zones=len(self.side_order),
+        )
+
+        plc_status = send_tyre_result_to_plc(
+            summary.get("final_result", "WAITING"),
+            env_path=ENV_PATH,
+        )
+
+        set_live_result_plc_output(plc_status.get("display", "Not Sent"))
+        apply_tyre_result_to_gui(self)
+
         self.statusBar().showMessage(f"✅ {cycle_id} | Result: {final_label}")
         self.update_label_async()
         QTimer.singleShot(700, self.refresh_cycle_images_async)
@@ -1401,7 +1508,17 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Path Error", 
                                    f"Demo capture folder not found:\n{demo_capture_root}")
                 return
-        
+        reset_live_progress(total_images=len(self.side_order))
+        set_live_progress(
+            phase="CAPTURING",
+            active_zone="All Zones",
+            images_captured=0,
+            total_images=len(self.side_order),
+            message="Live inspection started",
+        )
+        apply_live_progress_to_gui(self)
+        reset_live_result()
+        apply_tyre_result_to_gui(self)
         self.statusBar().showMessage(f"Live Inspection Started | SKU={sku_name} | TYRE={tyre_name}")
         
         worker = LiveInspectionWorker(
@@ -1425,12 +1542,40 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"Inspection finished | SKU={sku} | TYRE={tyre}")
             except Exception:
                 self.statusBar().showMessage("Inspection completed")
+            set_live_progress(
+                phase="COMPLETED",
+                active_zone="All Zones",
+                images_captured=len(self.side_order),
+                total_images=len(self.side_order),
+                message="Inspection completed",
+            )
+            apply_live_progress_to_gui(self)
+            summary = update_live_result_from_cycle_result(
+                result,
+                total_zones=len(self.side_order),
+            )
+
+            plc_status = send_tyre_result_to_plc(
+                summary.get("final_result", "WAITING"),
+                env_path=ENV_PATH,
+            )
+
+            set_live_result_plc_output(plc_status.get("display", "Not Sent"))
+            apply_tyre_result_to_gui(self)
             self.update_label_async()
             QTimer.singleShot(700, self.refresh_cycle_images_async)
         
         def on_error(message):
             self._mark_ui_active()
             self.statusBar().showMessage(f"Inspection failed: {message}")
+            set_live_progress(
+                phase="FAILED",
+                active_zone="-",
+                message=message,
+            )
+            apply_live_progress_to_gui(self)
+            set_live_result_failed(message)
+            apply_tyre_result_to_gui(self)
             QMessageBox.critical(self, "Live Inspection Error", message)
         
         self.thread_manager.start_thread("inspection", worker, on_finished, on_error)
@@ -1494,10 +1639,25 @@ class MainWindow(QMainWindow):
             self.back_btn.setVisible(True)
     
     def _go_dashboard_from_inner_pages(self):
+        try:
+            if getattr(self, "axis_status_page", None) is not None:
+                if hasattr(self.axis_status_page, "stop_refresh"):
+                    self.axis_status_page.stop_refresh()
+        except Exception:
+            pass
+
         if self.content_stack:
             self.content_stack.setCurrentIndex(0)
+
         if self.back_btn:
             self.back_btn.setVisible(False)
+
+        try:
+            self.refresh_component_health()
+        except Exception:
+            pass
+
+        QTimer.singleShot(200, self.refresh_component_health)
     
     def setup_header_bar(self, parent_layout):
         header_frame = QFrame()
@@ -1544,6 +1704,32 @@ class MainWindow(QMainWindow):
         h.addSpacing(10)
         h.addWidget(time_box)
         h.addStretch()
+
+        self.mode_indicator_label = QLabel("Mode: UNKNOWN")
+        self.mode_indicator_label.setAlignment(Qt.AlignCenter)
+        self.mode_indicator_label.setStyleSheet("""
+            QLabel {
+                background: #eeeeee;
+                color: #333333;
+                border-radius: 10px;
+                padding: 6px 12px;
+                font: 800 12px 'Segoe UI';
+            }
+        """)
+        h.addWidget(self.mode_indicator_label)
+
+        self.live_system_status_label = QLabel("System: NOT READY")
+        self.live_system_status_label.setAlignment(Qt.AlignCenter)
+        self.live_system_status_label.setStyleSheet("""
+            QLabel {
+                background: #eeeeee;
+                color: #333333;
+                border-radius: 10px;
+                padding: 6px 12px;
+                font: 800 12px 'Segoe UI';
+            }
+        """)
+        h.addWidget(self.live_system_status_label)
         
         self.back_btn = QToolButton()
         self.back_btn.setText("Back to Live")
@@ -1602,10 +1788,46 @@ class MainWindow(QMainWindow):
         h.addWidget(exit_btn)
         
         parent_layout.addWidget(header_frame)
+
+    def _on_content_stack_changed(self, index):
+        """
+        If user leaves Device page by clicking Back, Live, Dashboard, Axis Status, etc.,
+        stop Device page camera streams and release camera handles.
+        """
+
+        try:
+            new_widget = self.content_stack.widget(index)
+
+            old_widget = getattr(self, "_last_stack_widget", None)
+
+            if old_widget is not None:
+                if old_widget is getattr(self, "device_page", None):
+                    if hasattr(old_widget, "cleanup_device_page"):
+                        old_widget.cleanup_device_page(destroy_devices=True)
+
+            self._last_stack_widget = new_widget
+
+        except Exception as e:
+            logger.warning(f"[DEVICE PAGE] stack cleanup failed: {e}")
     
     def handle_back_to_dashboard(self):
+        try:
+            if getattr(self, "axis_status_page", None) is not None:
+                if hasattr(self.axis_status_page, "stop_refresh"):
+                    self.axis_status_page.stop_refresh()
+        except Exception:
+            pass
+
+        try:
+            if getattr(self, "device_page", None) is not None:
+                if hasattr(self.device_page, "cleanup_device_page"):
+                    self.device_page.cleanup_device_page(destroy_devices=True)
+        except Exception as e:
+            logger.warning(f"[DEVICE PAGE] back cleanup failed: {e}")
+
         if self.content_stack is not None:
             self.content_stack.setCurrentIndex(0)
+
         if self.back_btn:
             self.back_btn.setVisible(False)
     
@@ -1676,6 +1898,8 @@ class MainWindow(QMainWindow):
         buttons = [
             ("Test Mode", "test_mode.png", self.open_test_popup),
             ("Live", "run_smart_qc.png", self.capture_image),
+            ("Device", "cam.png", self.open_device_page),
+            ("Axis Status", "motor.png", self.open_axis_status_page),
             ("Run New SKU", "run_new_sku.png", self.run_new_sku),
             ("Repeatability", "repeatability.png", self.open_repeatability_page),
             ("Action Code Plan", "action_code_plan.png", self.open_action_code_plan),
@@ -1753,7 +1977,7 @@ class MainWindow(QMainWindow):
     
     def setup_main_content(self, main_layout):
         self.content_stack = QStackedWidget()
-        
+        self.content_stack.currentChanged.connect(self._on_content_stack_changed)
         dashboard_widget = QWidget()
         dashboard_widget.setStyleSheet("background-color: #f5f5f5;")
         content_layout = QHBoxLayout(dashboard_widget)
@@ -1819,7 +2043,7 @@ class MainWindow(QMainWindow):
         tyre_layout.addWidget(self.selected_tyre_value_label)
         info_layout.addWidget(tyre_card)
         
-        barcode_card, barcode_layout = _make_info_card("Bar Code Image")
+        barcode_card, barcode_layout = _make_info_card("Bar Code Num")
         barcode_img = self.get_latest_image(BAR_CODE_DIR)
         
         img_label = QLabel()
@@ -1884,57 +2108,132 @@ class MainWindow(QMainWindow):
             self.current_panel_image_paths[side_key] = None
         
         center_layout.addWidget(self.images_row)
+        # ------------------------------------------------------------------
+        # LIVE INSPECTION PROGRESS BELOW IMAGE PANELS
+        # ------------------------------------------------------------------
+        self.live_progress_widget = create_live_progress_widget(self)
+        center_layout.addWidget(self.live_progress_widget)
         image_layout.addWidget(center_frame)
         content_layout.addWidget(image_frame, 4)
         
-        defect_frame = QFrame()
-        defect_frame.setFixedWidth(280)
-        defect_frame.setStyleSheet("QFrame { background-color: white; border-radius: 20px; }")
-        defect_layout = QVBoxLayout(defect_frame)
-        defect_layout.setContentsMargins(10, 10, 10, 10)
-        
-        defect_title = QLabel("Defect Normal")
+        # ------------------------------------------------------------------
+        # RIGHT PANEL: Component Health + Defect Info
+        # ------------------------------------------------------------------
+        right_panel = QFrame()
+        right_panel.setFixedWidth(300)
+        right_panel.setStyleSheet("QFrame { background-color: white; border-radius: 20px; }")
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(10, 10, 10, 10)
+        right_layout.setSpacing(10)
+
+        # ---------------- Component Health ----------------
+        health_title = QLabel("Component Health")
+        health_title.setStyleSheet("font: bold 15px 'Arial';")
+        health_title.setAlignment(Qt.AlignCenter)
+        right_layout.addWidget(health_title)
+
+        self.health_labels = {}
+
+        def make_health_row(key, title):
+            row = QFrame()
+            row.setStyleSheet("""
+                QFrame {
+                    background-color: #F8F8F8;
+                    border-radius: 8px;
+                }
+            """)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(8, 5, 8, 5)
+            row_layout.setSpacing(6)
+
+            name_lbl = QLabel(title)
+            name_lbl.setStyleSheet("font: bold 11px 'Segoe UI'; color:#222;")
+            row_layout.addWidget(name_lbl)
+
+            row_layout.addStretch()
+
+            status_lbl = QLabel("● Not checked")
+            status_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            status_lbl.setStyleSheet("font: bold 10px 'Segoe UI'; color:#666;")
+            row_layout.addWidget(status_lbl)
+
+            self.health_labels[key] = status_lbl
+            right_layout.addWidget(row)
+
+        make_health_row("plc", "PLC")
+        make_health_row("cameras", "Cameras")
+        make_health_row("laser", "Laser")
+        make_health_row("gpu", "GPU")
+        make_health_row("storage", "Storage")
+        make_health_row("app_ok", "App OK")
+
+        # separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background-color:#e6e6e6;")
+        right_layout.addWidget(sep)
+
+        # ---------------- Tyre Result Summary / F-025 ----------------
+        self.tyre_result_summary_widget = create_tyre_result_summary_widget(self)
+        right_layout.addWidget(self.tyre_result_summary_widget)
+
+        # separator
+        sep_result = QFrame()
+        sep_result.setFrameShape(QFrame.HLine)
+        sep_result.setStyleSheet("background-color:#e6e6e6;")
+        right_layout.addWidget(sep_result)
+
+        # ---------------- Defect Info ----------------
+        defect_title = QLabel("Defect Info")
         defect_title.setStyleSheet("font: bold 15px 'Arial';")
         defect_title.setAlignment(Qt.AlignCenter)
-        defect_layout.addWidget(defect_title)
-        
+        right_layout.addWidget(defect_title)
+
+        self.defect_info_container = QWidget()
+        self.defect_info_layout = QVBoxLayout(self.defect_info_container)
+        self.defect_info_layout.setContentsMargins(0, 0, 0, 0)
+        self.defect_info_layout.setSpacing(8)
+
+        # Initial/default defect cards
         defects = [
             {"name": "Tread blister", "area": "1mm", "code": "-", "category": "OE"},
             {"name": "Tread lightness", "area": "3mm", "code": "-", "category": "Replacement"}
         ]
-        
+
         for defect in defects:
             dcard = QFrame()
             dcard.setStyleSheet("QFrame { background-color: #F8F8F8; border-radius: 10px; }")
             dcard_layout = QVBoxLayout(dcard)
             dcard_layout.setContentsMargins(10, 6, 10, 6)
-            
+
             name_label = QLabel(defect["name"])
             name_label.setStyleSheet("font: bold 13px 'Arial';")
             dcard_layout.addWidget(name_label)
-            
+
             area_label = QLabel(f"Defect Area: {defect['area']}")
             area_label.setStyleSheet("font: 11px 'Arial';")
             dcard_layout.addWidget(area_label)
-            
+
             code_label = QLabel(f"Action Code: {defect['code']}")
             code_label.setStyleSheet("font: 11px 'Arial';")
             dcard_layout.addWidget(code_label)
-            
+
             category_label = QLabel(f"Category: {defect['category']}")
             category_label.setStyleSheet("font: 11px 'Arial';")
             dcard_layout.addWidget(category_label)
-            
-            defect_layout.addWidget(dcard)
-        
-        defect_layout.addStretch()
-        content_layout.addWidget(defect_frame, 1)
+
+            self.defect_info_layout.addWidget(dcard)
+
+        right_layout.addWidget(self.defect_info_container)
+        right_layout.addStretch()
+
+        content_layout.addWidget(right_panel, 1)
         
         self.content_stack.addWidget(dashboard_widget)
         
         self.test_mode_page = TestModePage(
             reports_dir=TEST_MODE_REPORTS,
-            expected_serials=["244802149","244802163","251102086","251401655","251300826","251500640"],
+            expected_serials=None,
             on_close=lambda: self._go_dashboard_from_inner_pages(),
             media_path=MEDIA_PATH
         )
@@ -2095,6 +2394,60 @@ class MainWindow(QMainWindow):
         if self.back_btn:
             self.back_btn.setVisible(True)
     
+    def open_device_page(self):
+        try:
+            # Stop axis status refresh if it was running
+            try:
+                if getattr(self, "axis_status_page", None) is not None:
+                    if hasattr(self.axis_status_page, "stop_refresh"):
+                        self.axis_status_page.stop_refresh()
+            except Exception:
+                pass
+
+            # Create Device page only once
+            if getattr(self, "device_page", None) is None:
+                self.device_page = DevicePage(parent=self)
+                self.content_stack.addWidget(self.device_page)
+
+            # Show Device page
+            self.content_stack.setCurrentWidget(self.device_page)
+
+            if self.back_btn:
+                self.back_btn.setVisible(True)
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Device Page Error",
+                f"Failed to open Device page:\n{e}"
+            )
+
+    def open_axis_status_page(self):
+        try:
+            if getattr(self, "axis_status_page", None) is None:
+                self.axis_status_page = AxisStatusPage(
+                    media_path=MEDIA_PATH,
+                    env_path=ENV_PATH,
+                    on_close=self._go_dashboard_from_inner_pages,
+                    parent=self,
+                )
+                self.content_stack.addWidget(self.axis_status_page)
+
+            self.content_stack.setCurrentWidget(self.axis_status_page)
+
+            if hasattr(self.axis_status_page, "start_refresh"):
+                self.axis_status_page.start_refresh()
+
+            if self.back_btn:
+                self.back_btn.setVisible(True)
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Axis Status Error",
+                f"Failed to open Axis Status page:\n{e}"
+            )
+    
     def get_latest_image_from_folder(self, folder_path):
         if not os.path.isdir(folder_path):
             return None
@@ -2144,13 +2497,22 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         logger.info("Application closing - cleaning up...")
         try:
-            self.stop_continuous_inspection()  
+            self.stop_continuous_inspection()
+
+            try:
+                if getattr(self, "device_page", None) is not None:
+                    if hasattr(self.device_page, "cleanup_device_page"):
+                        self.device_page.cleanup_device_page(destroy_devices=True)
+            except Exception as e:
+                logger.warning(f"[DEVICE PAGE] close cleanup failed: {e}")
+
             self.update_timer.stop()
             self.update_label_timer.stop()
             self.update_images_timer.stop()
             self.copy_timer.stop()
             self._freeze_monitor.stop()
             self.thread_manager.stop_all(timeout=3000)
+
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
         finally:
@@ -2169,11 +2531,6 @@ def cleanup_camera_resources():
             logger.info("Camera system closed successfully.")
     except Exception as e:
         logger.error(f"Error during camera cleanup: {e}")
-    try:
-        disconnect_plc()
-    except Exception as e:
-        logger.error(f"Error during PLC cleanup: {e}")
-    logger.info("Application cleanup complete.")
 
 def signal_handler(signum, frame):
     """Handle system signals for graceful shutdown"""

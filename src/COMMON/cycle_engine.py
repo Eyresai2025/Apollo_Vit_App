@@ -39,6 +39,15 @@ except Exception:
     except Exception:
         TRTViTFeatureExtractor = None
 
+from src.camera.HARDWARE_TRIGGER import (
+    get_camera_to_side_map,
+    get_side_to_camera_map,
+)
+try:
+    from src.COMMON.live_inspection_state import set_live_progress
+except Exception:
+    def set_live_progress(*args, **kwargs):
+        pass
 
 # =========================================================
 # THREAD OPTIMIZATION
@@ -100,13 +109,29 @@ SIDE_MODULES = {
 
 DEFAULT_SIDE_ORDER = ["innerwall", "sidewall1", "sidewall2", "tread", "bead"]
 
-CAMERA_SERIAL_MAP = {
-    "bead": "serial_254701283",
-    "innerwall": "serial_254701292",
-    "sidewall1": "serial_254901428",
-    "tread": "serial_254901430",
-    "sidewall2": "serial_254901432",
-}
+def _build_camera_serial_map_from_env() -> Dict[str, str]:
+    """
+    Returns:
+        {
+            "sidewall1": "serial_244802149",
+            "sidewall2": "serial_244802163",
+            "innerwall": "serial_251102086",
+            "tread": "serial_251401655",
+            "bead": "serial_251300826",
+        }
+
+    Source:
+        .env → HARDWARE_TRIGGER.py → get_side_to_camera_map()
+    """
+    side_to_camera = get_side_to_camera_map()
+
+    return {
+        side_name: f"serial_{serial}"
+        for side_name, serial in side_to_camera.items()
+    }
+
+
+CAMERA_SERIAL_MAP = _build_camera_serial_map_from_env()
 
 
 # =========================================================
@@ -187,15 +212,31 @@ def capture_and_save_images(
     print("[CAPTURE] Starting camera capture for all sides ...")
 
     raw_images: Dict[str, np.ndarray] = multi_camera_manager.capture_all()
-    serial_to_side = {v.replace("serial_", ""): k for k, v in CAMERA_SERIAL_MAP.items()}
+
+    # Prefer live mapping from MultiCameraManager if available
+    if hasattr(multi_camera_manager, "camera_to_side"):
+        serial_to_side = {
+            str(serial): side
+            for serial, side in multi_camera_manager.camera_to_side.items()
+        }
+    else:
+        serial_to_side = get_camera_to_side_map()
 
     image_map: Dict[str, str] = {}
 
     for serial_str, img in raw_images.items():
+        serial_str = str(serial_str)
+
         if img is None:
-            side = serial_to_side.get(str(serial_str), str(serial_str))
+            side = serial_to_side.get(serial_str, serial_str)
             print(f"[CAPTURE][WARN] No image for serial {serial_str} side={side}")
             continue
+
+        side = serial_to_side.get(serial_str)
+
+        if not side:
+            print(f"[CAPTURE][WARN] Serial {serial_str} not mapped in .env.")
+            side = f"camera_{serial_str}"
 
         folder_name = f"serial_{serial_str}"
         cam_folder = _camera_serial_folder(cycle_capture_dir, folder_name)
@@ -207,11 +248,10 @@ def capture_and_save_images(
 
         print(f"[CAPTURE] Saved {serial_str} -> {out_path}")
 
-        side = serial_to_side.get(str(serial_str))
-        if side and side in sides_to_run:
+        if side in sides_to_run:
             image_map[side] = out_path
         else:
-            print(f"[CAPTURE][WARN] Serial {serial_str} not mapped or not selected.")
+            print(f"[CAPTURE][WARN] Side {side} not selected in sides_to_run.")
 
     return image_map
 
@@ -322,8 +362,10 @@ def build_image_map_from_capture_dir(
     image_map: Dict[str, str] = {}
     valid_exts = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
 
+    camera_serial_map = _build_camera_serial_map_from_env()
+
     for side_name in sides_to_run:
-        serial_folder_name = CAMERA_SERIAL_MAP.get(side_name)
+        serial_folder_name = camera_serial_map.get(side_name)
 
         if not serial_folder_name:
             raise ValueError(f"No camera serial mapping for side: {side_name}")
@@ -375,8 +417,14 @@ def build_image_map_from_capture_root(
 ) -> Dict[str, str]:
     image_map: Dict[str, str] = {}
 
+    camera_serial_map = _build_camera_serial_map_from_env()
+
     for side_name in sides_to_run:
-        serial_folder = CAMERA_SERIAL_MAP[side_name]
+        serial_folder = camera_serial_map.get(side_name)
+
+        if not serial_folder:
+            raise ValueError(f"No camera serial mapping for side: {side_name}")
+
         folder_path = os.path.join(capture_root, serial_folder)
 
         latest_image = get_latest_image_from_folder(folder_path)
@@ -1152,6 +1200,13 @@ def run_cycle(
                 try:
                     _, result = fut.result()
                     side_results[side_name] = result
+                    set_live_progress(
+                        phase="INFERENCE",
+                        active_zone=side_name,
+                        images_captured=len(side_results),
+                        total_images=len(sides_to_run),
+                        message=f"Inference completed for {side_name}",
+                    )
 
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
@@ -1162,7 +1217,13 @@ def run_cycle(
                         "final_label": "FAILED",
                         "error": str(e),
                     }
-
+                    set_live_progress(
+                        phase="INFERENCE",
+                        active_zone=side_name,
+                        images_captured=len(side_results),
+                        total_images=len(sides_to_run),
+                        message=f"Inference failed for {side_name}",
+                    )
                     print(
                         f"[MAIN][ERROR] inference failed | "
                         f"side={side_name} | error={e}"

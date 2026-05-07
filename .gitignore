@@ -5,6 +5,7 @@ media/capture
 media/new_sku_images
 media/output
 media/Reports
+media/TestMode Reports
 .vscode
 graphs_output
 Apollo_env

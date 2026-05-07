@@ -30,9 +30,16 @@ from src.COMMON.cycle_engine import (
     preload_live_runtimes,
 )
 
-# Import trigger mode from HARDWARE_TRIGGER
-from src.camera.HARDWARE_TRIGGER import TRIGGER_MODE
-
+from src.camera.HARDWARE_TRIGGER import (
+    TRIGGER_MODE,
+    get_camera_to_side_map,
+    get_side_to_camera_map,
+)
+try:
+    from src.COMMON.live_inspection_state import set_live_progress
+except Exception:
+    def set_live_progress(*args, **kwargs):
+        pass
 
 # =========================================================
 # CONTINUOUS CYCLE WORKER (Runs in background thread)
@@ -99,16 +106,8 @@ class ContinuousCycleWorker(QObject):
         self._runtimes = None
         self.is_hardware = (TRIGGER_MODE == "hardware")
         
-        # Camera serial to side name mapping
-        self.camera_to_side = {
-            "244802149": "sidewall1",
-            "244802163": "sidewall2",
-            "251102086": "innerwall",
-            "251401655": "tread",
-            "251300826": "bead",
-        }
-        
-        self.side_to_camera = {v: k for k, v in self.camera_to_side.items()}
+        self.camera_to_side = get_camera_to_side_map()
+        self.side_to_camera = get_side_to_camera_map()
         os.makedirs(self.media_root, exist_ok=True)
     
     @pyqtSlot()
@@ -313,6 +312,14 @@ class ContinuousCycleWorker(QObject):
     def _execute_capture(self, capture_count: int, timestamp: str) -> bool:
         """Execute a complete capture + process cycle"""
         try:
+            set_live_progress(
+                phase="CAPTURING",
+                active_zone="All Zones",
+                images_captured=0,
+                total_images=len(self.sides_to_run),
+                message="Capturing images from cameras",
+            )
+
             self.status_update.emit(f" Capturing images from {len(self.multi_camera_manager.cameras)} cameras...")
             
             images = self.multi_camera_manager.capture_all()
@@ -323,6 +330,15 @@ class ContinuousCycleWorker(QObject):
                 return False
             
             success_count = sum(1 for img in images.values() if img is not None)
+
+            set_live_progress(
+                phase="CAPTURING",
+                active_zone="All Zones",
+                images_captured=success_count,
+                total_images=len(self.sides_to_run),
+                message=f"Captured {success_count}/{len(self.sides_to_run)} images",
+            )
+
             self.status_update.emit(f"   Captured: {success_count}/{len(images)} cameras")
             self.capture_completed.emit(images)
             
@@ -338,14 +354,39 @@ class ContinuousCycleWorker(QObject):
                 return False
             
             self.images_saved.emit(image_map)
+
+            set_live_progress(
+                phase="CAPTURING",
+                active_zone="All Zones",
+                images_captured=len(image_map),
+                total_images=len(self.sides_to_run),
+                message=f"Saved {len(image_map)} side images",
+            )
+
             self.status_update.emit(f"   Saved {len(image_map)} sides: {', '.join(image_map.keys())}")
             
             self.processing_started.emit(cycle_id)
             self.status_update.emit(f" Starting AI pipeline for {cycle_id}...")
             
+            set_live_progress(
+                phase="INFERENCE",
+                active_zone="All Zones",
+                images_captured=len(image_map),
+                total_images=len(self.sides_to_run),
+                message=f"AI inference started for {cycle_id}",
+            )
+
             result = self._run_ai_pipeline(image_map, cycle_id, cycle_capture_dir)
             
             if result:
+                set_live_progress(
+                    phase="COMPLETED",
+                    active_zone="All Zones",
+                    images_captured=len(self.sides_to_run),
+                    total_images=len(self.sides_to_run),
+                    message=f"Cycle completed: {result.get('final_label', 'Unknown')}",
+                )
+
                 self.processing_completed.emit(result)
                 final_label = result.get('final_label', 'Unknown')
                 cycle_time = result.get('cycle_latency_sec', 0)
@@ -364,6 +405,12 @@ class ContinuousCycleWorker(QObject):
             return True
             
         except Exception as e:
+            set_live_progress(
+                phase="FAILED",
+                active_zone="-",
+                message=f"Capture cycle error: {e}",
+            )
+
             error_msg = f"Capture cycle error: {e}"
             self.status_update.emit(f" {error_msg}")
             self.processing_error.emit(error_msg)
@@ -712,7 +759,14 @@ def run_capture_folder_cycle(
         cycle_capture_dir=cycle_capture_dir, sides_to_run=sides_to_run,
         multi_camera_manager=multi_camera_manager,
     )
-
+    
+    set_live_progress(
+        phase="CAPTURING",
+        active_zone="All Zones",
+        images_captured=len(image_map),
+        total_images=len(sides_to_run),
+        message=f"Images ready: {len(image_map)}/{len(sides_to_run)}",
+    )
     print_cycle_inputs(sku_name, tyre_name, sku_calibration_dir, shared_artifacts_dir,
                        cycle_capture_dir, cycle_id, image_map, sides_to_run)
 
@@ -727,7 +781,13 @@ def run_capture_folder_cycle(
 
     output_root = os.path.join(media_root, "output")
     os.makedirs(output_root, exist_ok=True)
-
+    set_live_progress(
+        phase="INFERENCE",
+        active_zone="All Zones",
+        images_captured=len(image_map),
+        total_images=len(sides_to_run),
+        message="AI inference started",
+    )
     result = run_cycle(
         image_map=image_map, runtimes=runtimes, output_root=output_root,
         cycle_id=cycle_id, sides_to_run=sides_to_run,
@@ -736,6 +796,13 @@ def run_capture_folder_cycle(
     )
 
     try:
+        set_live_progress(
+            phase="COMPLETED",
+            active_zone="All Zones",
+            images_captured=len(sides_to_run),
+            total_images=len(sides_to_run),
+            message="Inspection completed",
+        )
         save_cycle_metadata(result)
     except Exception as e:
         print(f"[DB][ERROR] save failed | error={e}")
