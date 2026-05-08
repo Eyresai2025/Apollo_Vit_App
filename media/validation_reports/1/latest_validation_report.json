@@ -1,0 +1,13 @@
+{
+  "sku_name": "1",
+  "status": "PENDING_VALIDATION_DATA",
+  "metrics_source": "",
+  "confusion_matrix": [],
+  "precision": {},
+  "recall": {},
+  "f1": {},
+  "f1_macro": null,
+  "accepted": false,
+  "message": "Validation metrics file not found. AI validation pipeline must generate validation_metrics.json.",
+  "validated_at": "2026-05-07 16:01:10"
+}

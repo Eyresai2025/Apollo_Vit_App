@@ -1,0 +1,128 @@
+{
+  "type": "sku_recipe",
+  "sku_name": "1",
+  "sku_folder": "1",
+  "version": 1,
+  "status": "DRAFT",
+  "tyre_size": "195/65 R15",
+  "barcode_pattern": "Apollo",
+  "inspection_zones": 5,
+  "image_count_per_zone": 20,
+  "camera_axis_targets": {
+    "axis_01": {
+      "axis_id": 1,
+      "name": "Axis 1",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:06",
+      "source": "ENV_DEMO"
+    },
+    "axis_02": {
+      "axis_id": 2,
+      "name": "Axis 2",
+      "value": 0.1,
+      "captured_at": "2026-05-07 16:00:06",
+      "source": "ENV_DEMO"
+    },
+    "axis_03": {
+      "axis_id": 3,
+      "name": "Axis 3",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:06",
+      "source": "ENV_DEMO"
+    },
+    "axis_04": {
+      "axis_id": 4,
+      "name": "Axis 4",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:06",
+      "source": "ENV_DEMO"
+    },
+    "axis_05": {
+      "axis_id": 5,
+      "name": "Axis 5",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:06",
+      "source": "ENV_DEMO"
+    },
+    "axis_06": {
+      "axis_id": 6,
+      "name": "Axis 6",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:06",
+      "source": "ENV_DEMO"
+    }
+  },
+  "laser_axis_targets": {
+    "axis_07": {
+      "axis_id": 7,
+      "name": "Axis 7",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:24",
+      "source": "ENV_DEMO"
+    },
+    "axis_08": {
+      "axis_id": 8,
+      "name": "Axis 8",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:24",
+      "source": "ENV_DEMO"
+    },
+    "axis_09": {
+      "axis_id": 9,
+      "name": "Axis 9",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:24",
+      "source": "ENV_DEMO"
+    },
+    "axis_10": {
+      "axis_id": 10,
+      "name": "Axis 10",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:24",
+      "source": "ENV_DEMO"
+    },
+    "axis_11": {
+      "axis_id": 11,
+      "name": "Axis 11",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:24",
+      "source": "ENV_DEMO"
+    },
+    "axis_12": {
+      "axis_id": 12,
+      "name": "Axis 12",
+      "value": 0.0,
+      "captured_at": "2026-05-07 16:00:24",
+      "source": "ENV_DEMO"
+    }
+  },
+  "camera_config_links": {
+    "profile_root": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\camera_profiles",
+    "exists": true
+  },
+  "laser_config_links": {
+    "profile_root": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\laser_profiles",
+    "exists": true
+  },
+  "vit_model_path": "",
+  "training_date": "2026-05-07 16:01:34",
+  "training_summary": {},
+  "validation_score": null,
+  "validation_result": {
+    "sku_name": "1",
+    "status": "PENDING_VALIDATION_DATA",
+    "metrics_source": "",
+    "confusion_matrix": [],
+    "precision": {},
+    "recall": {},
+    "f1": {},
+    "f1_macro": null,
+    "accepted": false,
+    "message": "Validation metrics file not found. AI validation pipeline must generate validation_metrics.json.",
+    "validated_at": "2026-05-07 16:01:10",
+    "report_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\validation_reports\\1\\latest_validation_report.json"
+  },
+  "created_at": "2026-05-07 16:01:34",
+  "updated_at": "2026-05-07 16:01:34",
+  "author": ""
+}

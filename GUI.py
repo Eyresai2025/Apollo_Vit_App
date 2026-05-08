@@ -625,9 +625,15 @@ class MainWindow(QMainWindow):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         self.screen_w = screen.width()
         self.screen_h = screen.height()
-        self.ui_scale = min(self.screen_w / 1920.0, self.screen_h / 1080.0)
-        
-        self.resize(self.screen_w, self.screen_h)
+
+        # Do not upscale UI above 1.0. This avoids oversized minimum layouts.
+        self.ui_scale = min(self.screen_w / 1920.0, self.screen_h / 1080.0, 1.0)
+
+        # Use available screen geometry, not full monitor geometry.
+        self.setGeometry(screen)
+
+        # Let Windows/Qt maximize within usable area.
+        QTimer.singleShot(0, self.showMaximized)
         self.setWindowIcon(QIcon(os.path.join(MEDIA_PATH, "img/smartQC-.ico")))
         
         # Thread management
@@ -1618,8 +1624,10 @@ class MainWindow(QMainWindow):
     def open_new_sku_capture_page(self, sku_meta=None):
         if sku_meta is None:
             sku_meta = {
-                "tyre_name": "", "barcode": "", "sku_name": "",
-                "operator": "", "machine_serial": "",
+                "tyre_name": "",
+                "barcode": "",
+                "sku_name": "",
+                "operator": "",
             }
         if getattr(self, "new_sku_capture_page", None) is not None:
             self.new_sku_capture_page.set_sku_meta(sku_meta)
