@@ -60,7 +60,7 @@ from src.COMMON.live_result_state import (
     set_live_result_plc_output,
     set_live_result_failed,
 )
-
+from src.Pages.recipe_management_page import RecipeManagementPage
 from src.COMMON.plc_result_sender import send_tyre_result_to_plc
 from src.Pages.device_page import DevicePage
 from src.UI.live_result_ui import (
@@ -653,6 +653,7 @@ class MainWindow(QMainWindow):
         self.new_sku_page = None
         self.axis_status_page = None
         self.device_page = None
+        self.recipe_management_page = None
         self._last_stack_widget = None
         self.available_skus = []
         self.pending_preload_sku = None
@@ -1909,6 +1910,7 @@ class MainWindow(QMainWindow):
             ("Device", "cam.png", self.open_device_page),
             ("Axis Status", "motor.png", self.open_axis_status_page),
             ("Run New SKU", "run_new_sku.png", self.run_new_sku),
+            ("Recipe Management", "recipe.png", self.open_recipe_management_page),
             ("Repeatability", "repeatability.png", self.open_repeatability_page),
             ("Action Code Plan", "action_code_plan.png", self.open_action_code_plan),
             ("Dashboard", "dashboard.png", self.open_dashboard),
@@ -2454,6 +2456,41 @@ class MainWindow(QMainWindow):
                 self,
                 "Axis Status Error",
                 f"Failed to open Axis Status page:\n{e}"
+            )
+    
+    def open_recipe_management_page(self):
+        try:
+            # Stop Axis Status refresh if it is running
+            try:
+                if getattr(self, "axis_status_page", None) is not None:
+                    if hasattr(self.axis_status_page, "stop_refresh"):
+                        self.axis_status_page.stop_refresh()
+            except Exception:
+                pass
+
+            if getattr(self, "recipe_management_page", None) is None:
+                self.recipe_management_page = RecipeManagementPage(
+                    media_path=MEDIA_PATH,
+                    env_path=ENV_PATH,
+                    on_close=self._go_dashboard_from_inner_pages,
+                    on_edit_recipe=self.open_new_sku_capture_page,
+                    parent=self,
+                )
+                self.content_stack.addWidget(self.recipe_management_page)
+
+            if hasattr(self.recipe_management_page, "refresh_recipes"):
+                self.recipe_management_page.refresh_recipes()
+
+            self.content_stack.setCurrentWidget(self.recipe_management_page)
+
+            if self.back_btn:
+                self.back_btn.setVisible(True)
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Recipe Management Error",
+                f"Failed to open Recipe Management page:\n{e}"
             )
     
     def get_latest_image_from_folder(self, folder_path):
