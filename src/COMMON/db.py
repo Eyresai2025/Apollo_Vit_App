@@ -28,6 +28,7 @@ TYRE_DETAILS_COLLECTION = "TYRE DETAILS"
 NEW_SKU_META_COLLECTION = "New SKU"
 ACCOUNTS_COLLECTION_NAME = "Accounts"
 REPEATABILITY_COLLECTION = "Repeatability"
+TEST_MODE_RESULTS_COLLECTION = "Test Mode Results"
 
 
 # =========================
@@ -79,6 +80,9 @@ def get_accounts_collection():
 
 def get_repeatability_collection():
     return get_collection(REPEATABILITY_COLLECTION)
+
+def get_test_mode_results_collection():
+    return get_collection(TEST_MODE_RESULTS_COLLECTION)
 
 
 # =========================
@@ -342,6 +346,131 @@ def save_new_sku_image(
 # =========================
 def insert_repeatability_log(doc: dict):
     col = get_repeatability_collection()
+    return col.insert_one(doc)
+
+# =========================
+# TEST MODE RESULTS
+# =========================
+def _mongo_safe(value):
+    """
+    Convert objects into Mongo-safe values.
+
+    Hardware check result contains live Python objects like:
+    - snap7 PLC client
+    - multi camera manager
+
+    Those cannot be inserted into MongoDB directly.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, datetime):
+        return value
+
+    if isinstance(value, dict):
+        safe = {}
+        for k, v in value.items():
+            # Never store live hardware objects
+            if k in ("plc_client", "multi_cam"):
+                safe[k] = "<not stored>"
+            else:
+                safe[str(k)] = _mongo_safe(v)
+        return safe
+
+    if isinstance(value, (list, tuple)):
+        return [_mongo_safe(v) for v in value]
+
+    # fallback for non-serializable objects
+    try:
+        return str(value)
+    except Exception:
+        return f"<non_serializable:{type(value).__name__}>"
+
+
+def save_test_mode_result(result: Dict[str, Any], operator: str = ""):
+    """
+    Save one Full Hardware Check result to MongoDB.
+
+    Collection:
+        Test Mode Results
+    """
+    col = get_test_mode_results_collection()
+
+    result = result or {}
+    details = result.get("details", {}) or {}
+
+    plc = details.get("plc", {}) or {}
+    camera = details.get("camera", {}) or {}
+    laser = details.get("laser", {}) or {}
+    lights = details.get("lights", {}) or {}
+    app_ok = details.get("application_ok_bit", {}) or {}
+
+    camera_status = camera.get("camera_status", []) or []
+    connected_camera_count = sum(1 for c in camera_status if c.get("connected"))
+
+    now = datetime.now()
+
+    # Make raw result safe before storing.
+    raw_result = dict(result)
+    raw_result.pop("plc_client", None)
+    raw_result.pop("multi_cam", None)
+
+    doc = {
+        "type": "test_mode_result",
+
+        "created_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "inspectionDate": now.strftime("%d-%m-%Y"),
+        "operator": operator or "",
+
+        "overall_ok": bool(result.get("overall_ok", False)),
+        "overall_status": "PASS" if result.get("overall_ok") else "FAIL",
+
+        "deployment": result.get("deployment", ""),
+        "check_timestamp": result.get("timestamp", ""),
+
+        "lights_ok": bool(result.get("lights_ok", False)),
+        "plc_ok": bool(result.get("plc_ok", False)),
+        "camera_ok": bool(result.get("camera_ok", False)),
+        "laser_ok": bool(result.get("laser_ok", False)),
+        "app_ok_sent": bool(result.get("app_ok_sent", False)),
+
+        "plc": {
+            "plc_type": plc.get("plc_type", ""),
+            "ip": plc.get("ip", ""),
+            "rack": plc.get("rack", ""),
+            "slot": plc.get("slot", ""),
+            "connected": plc.get("connected", False),
+            "connected_on_attempt": plc.get("connected_on_attempt", ""),
+            "last_error": plc.get("last_error", ""),
+        },
+
+        "application_ok_bit": {
+            "address": app_ok.get("address", ""),
+            "sent": app_ok.get("sent", False),
+            "value_written": app_ok.get("value_written", False),
+            "read_back_value": app_ok.get("read_back_value", False),
+            "verified": app_ok.get("verified", False),
+            "message": app_ok.get("message", ""),
+        },
+
+        "cameras": {
+            "overall_ok": bool(result.get("camera_ok", False)),
+            "connected_count": connected_camera_count,
+            "total_count": len(camera_status),
+            "items": _mongo_safe(camera_status),
+        },
+
+        "lights": _mongo_safe(lights),
+        "laser": _mongo_safe(laser),
+        "messages": _mongo_safe(result.get("messages", [])),
+
+        # Keep full sanitized result for debugging.
+        "raw_result": _mongo_safe(raw_result),
+    }
+
     return col.insert_one(doc)
 
 

@@ -1630,20 +1630,43 @@ class MainWindow(QMainWindow):
                 "sku_name": "",
                 "operator": "",
             }
+
+        # Get the already-connected PLC client from Test Mode hardware check
+        hardware_state = get_hardware_state()
+        shared_plc_client = hardware_state.get("plc_client")
+
+        # If New SKU page already exists, reuse same page
         if getattr(self, "new_sku_capture_page", None) is not None:
             self.new_sku_capture_page.set_sku_meta(sku_meta)
+
+            # Update shared PLC client also, in case Test Mode was run after page creation
+            if hasattr(self.new_sku_capture_page, "set_plc_client"):
+                self.new_sku_capture_page.set_plc_client(shared_plc_client)
+
             self.content_stack.setCurrentWidget(self.new_sku_capture_page)
+
             if self.back_btn:
                 self.back_btn.setVisible(True)
+
             return
+
         save_root = os.path.join(MEDIA_PATH, "NewSKU_Captures")
+
         self.new_sku_capture_page = NewSKUPage(
-            media_path=MEDIA_PATH, raw_dir=RAW_IMAGE_DIR, save_root_dir=save_root,
-            mydb=mydb, meta_collection="New SKU", gridfs_bucket="fs",
-            sku_meta=sku_meta, on_close=self.handle_back_to_dashboard
+            media_path=MEDIA_PATH,
+            raw_dir=RAW_IMAGE_DIR,
+            save_root_dir=save_root,
+            mydb=mydb,
+            meta_collection="New SKU",
+            gridfs_bucket="fs",
+            sku_meta=sku_meta,
+            on_close=self.handle_back_to_dashboard,
+            plc_client=shared_plc_client,   # important
         )
+
         self.content_stack.addWidget(self.new_sku_capture_page)
         self.content_stack.setCurrentWidget(self.new_sku_capture_page)
+
         if self.back_btn:
             self.back_btn.setVisible(True)
     

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
 import ctypes
+import time
 
 import numpy as np
 import cv2
@@ -43,15 +44,7 @@ class ArenaCameraManager:
             return camera_list
 
         try:
-            for serial in list(self.streaming_serials):
-                self.stop_live_stream(serial)
-
-            try:
-                if self.devices:
-                    self.system.destroy_device()
-                    self.devices.clear()
-            except Exception as e:
-                print("[ARENA] destroy_device warning:", e)
+            self.close_all()
 
             devices = self.system.create_device()
             self.devices.clear()
@@ -97,11 +90,45 @@ class ArenaCameraManager:
             return default
 
     # ---------------------------------------------------------------------
-    # Safe node setter
+    # Safe helpers
     # ---------------------------------------------------------------------
+    def _force_stop_stream(self, serial: str):
+        """
+        Always try to stop acquisition before changing Width/Height/PixelFormat/TriggerMode.
+        This is required because these nodes are not writable during acquisition.
+        """
+        dev = self.get_device(serial)
+
+        if dev is None:
+            return
+
+        try:
+            dev.stop_stream()
+            print(f"[ARENA] Force stop stream for {serial}")
+        except Exception as e:
+            # This warning is acceptable if stream was not running.
+            print(f"[ARENA] force stop warning for {serial}: {e}")
+
+        self.streaming_serials.discard(str(serial))
+        time.sleep(0.2)
+
     def _set_node(self, nm, node_name, value, required=False):
         try:
             node = nm.get_node(node_name)
+
+            # Check writability where Arena exposes it.
+            try:
+                if hasattr(node, "is_writable") and not node.is_writable:
+                    msg = f"[ARENA] {node_name} is not writable"
+                    print(msg)
+
+                    if required:
+                        raise RuntimeError(msg)
+
+                    return False
+            except Exception:
+                pass
+
             node.value = value
             print(f"[ARENA] SET {node_name} = {value}")
             return True
@@ -121,10 +148,11 @@ class ArenaCameraManager:
     def apply_settings(self, serial: str, settings: dict, mode: str = None):
         """
         mode:
-            "preview_free_run" = image quality checking, TriggerMode Off
-            "hardware"         = production Line0 trigger settings
+            preview_free_run = image quality checking, TriggerMode Off
+            hardware         = production Line0 trigger settings
         """
 
+        serial = str(serial)
         dev = self.get_device(serial)
 
         if dev is None:
@@ -134,6 +162,9 @@ class ArenaCameraManager:
             mode = "hardware" if settings.get("use_hardware_trigger", True) else "preview_free_run"
 
         try:
+            # Critical: stop acquisition before changing Width/Height/PixelFormat.
+            self._force_stop_stream(serial)
+
             nm = dev.nodemap
 
             width = int(settings.get("width", 4096))
@@ -143,17 +174,20 @@ class ArenaCameraManager:
             exposure_us = float(settings.get("exposure_time", 150.0))
             gain_db = float(settings.get("gain", 0.0))
             line_rate = float(settings.get("acquisition_line_rate", 4096.0))
-            packet_size = int(settings.get("packet_size", 9000))
 
-            # Always stop trigger before changing trigger-related nodes
+            # Use 1500 as safe default. Use 9000 only after Jumbo Frames are enabled in Windows NIC.
+            packet_size = int(settings.get("packet_size", 1500))
+
+            # Trigger must be off before geometry/network changes.
             self._set_node(nm, "TriggerMode", "Off")
+            time.sleep(0.05)
 
             # Geometry
             self._set_node(nm, "Width", width, required=True)
             self._set_node(nm, "Height", height, required=True)
             self._set_node(nm, "PixelFormat", pixel_format, required=True)
 
-            # Exposure / gain manual
+            # Exposure / gain
             self._set_node(nm, "ExposureAuto", "Off")
             self._set_node(nm, "ExposureTime", exposure_us)
 
@@ -164,19 +198,18 @@ class ArenaCameraManager:
             self._set_node(nm, "AcquisitionLineRateEnable", True)
             self._set_node(nm, "AcquisitionLineRate", line_rate)
 
-            # Continuous acquisition
+            # Acquisition
             self._set_node(nm, "AcquisitionMode", "Continuous", required=True)
 
             # Network packet size
             self._set_node(nm, "GevSCPSPacketSize", packet_size)
 
             if mode == "preview_free_run":
-                # Image quality checking mode.
-                # No hardware trigger required.
                 self._set_node(nm, "TriggerMode", "Off", required=True)
 
                 print("[ARENA] Applied SOFTWARE/FREE-RUN preview settings")
-                self.current_settings_by_serial[str(serial)] = dict(settings)
+                self.current_settings_by_serial[serial] = dict(settings)
+                self.current_settings_by_serial[serial]["packet_size"] = packet_size
                 return True, "Software/free-run preview settings applied"
 
             # Hardware trigger production mode
@@ -186,36 +219,46 @@ class ArenaCameraManager:
                 settings.get("line_selector", "Line0"),
                 required=True
             )
+
             self._set_node(
                 nm,
                 "LineMode",
                 settings.get("line_mode", "Input"),
                 required=True
             )
+
             self._set_node(
                 nm,
                 "LineSource",
                 settings.get("line_source", "Off")
             )
 
+            # Use FrameStart for line-scan trigger unless you specifically confirm AcquisitionStart is required.
+            trigger_selector = settings.get("trigger_selector", "FrameStart")
+            if trigger_selector == "AcquisitionStart":
+                trigger_selector = "FrameStart"
+
             self._set_node(
                 nm,
                 "TriggerSelector",
-                settings.get("trigger_selector", "AcquisitionStart"),
+                trigger_selector,
                 required=True
             )
+
             self._set_node(
                 nm,
                 "TriggerSource",
                 settings.get("trigger_source", "Line0"),
                 required=True
             )
+
             self._set_node(
                 nm,
                 "TriggerActivation",
                 settings.get("trigger_activation", "RisingEdge"),
                 required=True
             )
+
             self._set_node(
                 nm,
                 "TriggerMode",
@@ -224,7 +267,9 @@ class ArenaCameraManager:
             )
 
             print("[ARENA] Applied HARDWARE TRIGGER Line0 settings")
-            self.current_settings_by_serial[str(serial)] = dict(settings)
+            self.current_settings_by_serial[serial] = dict(settings)
+            self.current_settings_by_serial[serial]["packet_size"] = packet_size
+            self.current_settings_by_serial[serial]["trigger_selector"] = trigger_selector
             return True, "Hardware trigger settings applied"
 
         except Exception as e:
@@ -234,28 +279,46 @@ class ArenaCameraManager:
     # Live preview
     # ---------------------------------------------------------------------
     def start_live_stream(self, serial: str, settings: dict, mode: str):
+        serial = str(serial)
         dev = self.get_device(serial)
 
         if dev is None:
             raise RuntimeError(f"Camera {serial} not connected")
 
-        if serial in self.streaming_serials:
-            self.stop_live_stream(serial)
+        # Always stop first, even if streaming_serials does not know.
+        self._force_stop_stream(serial)
 
         ok, msg = self.apply_settings(serial, settings, mode=mode)
 
         if not ok:
             raise RuntimeError(msg)
 
-        dev.start_stream()
-        self.streaming_serials.add(serial)
+        try:
+            packet_size = int(settings.get("packet_size", 1500))
+            print(f"[ARENA] Starting stream for {serial} with packet_size={packet_size}")
 
-        print(f"[ARENA] Stream started for {serial} | mode={mode}")
+            dev.start_stream()
+            self.streaming_serials.add(serial)
+
+            print(f"[ARENA] Stream started for {serial} | mode={mode}")
+
+        except Exception as e:
+            self.streaming_serials.discard(serial)
+
+            # Try to unlock camera after failed start_stream.
+            try:
+                dev.stop_stream()
+            except Exception:
+                pass
+
+            raise RuntimeError(str(e))
 
     def stop_live_stream(self, serial: str):
+        serial = str(serial)
         dev = self.get_device(serial)
 
         if dev is None:
+            self.streaming_serials.discard(serial)
             return
 
         try:
@@ -265,8 +328,10 @@ class ArenaCameraManager:
             print(f"[ARENA] stop_stream warning for {serial}: {e}")
 
         self.streaming_serials.discard(serial)
+        time.sleep(0.1)
 
     def get_live_frame(self, serial: str, timeout=1000):
+        serial = str(serial)
         dev = self.get_device(serial)
 
         if dev is None:
@@ -292,6 +357,7 @@ class ArenaCameraManager:
         save_dir="media/device_test_captures",
         timeout=8000
     ):
+        serial = str(serial)
         dev = self.get_device(serial)
 
         if dev is None:
@@ -300,12 +366,12 @@ class ArenaCameraManager:
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        was_streaming = serial in self.streaming_serials
-
-        if was_streaming:
+        if serial in self.streaming_serials:
             raise RuntimeError("Stop live preview before Capture One Image.")
 
         self.start_live_stream(serial, settings, mode=mode)
+
+        frame = None
 
         try:
             frame = self.get_live_frame(serial, timeout=timeout)
@@ -313,6 +379,9 @@ class ArenaCameraManager:
 
         finally:
             self.stop_live_stream(serial)
+
+        if frame is None:
+            raise RuntimeError("Capture failed. No frame received.")
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_path = save_dir / f"test_capture_{serial}_{mode}_{ts}.png"
@@ -325,11 +394,6 @@ class ArenaCameraManager:
     # Buffer conversion
     # ---------------------------------------------------------------------
     def _copy_buffer_to_numpy(self, buffer, serial: str):
-        """
-        Converts Arena buffer to numpy.
-        Supports Mono8 and Mono16.
-        """
-
         settings = self.current_settings_by_serial.get(str(serial), {})
         pixel_format = settings.get("pixel_format", "Mono16")
 
@@ -344,7 +408,6 @@ class ArenaCameraManager:
             dtype = np.uint8
             ctype = ctypes.c_ubyte
 
-        # Method 1: buffer.data
         try:
             arr = np.asarray(buffer.data)
 
@@ -355,7 +418,6 @@ class ArenaCameraManager:
         except Exception:
             pass
 
-        # Method 2: bytes(buffer.data)
         try:
             raw = bytes(buffer.data)
             arr = np.frombuffer(raw, dtype=dtype)
@@ -367,7 +429,6 @@ class ArenaCameraManager:
         except Exception:
             pass
 
-        # Method 3: buffer.pdata pointer
         try:
             ptr = ctypes.cast(buffer.pdata, ctypes.POINTER(ctype))
             arr = np.ctypeslib.as_array(ptr, shape=(size,))
@@ -376,16 +437,10 @@ class ArenaCameraManager:
 
         except Exception as e:
             raise RuntimeError(f"Could not convert Arena buffer to numpy: {e}")
-        
-    def close_all(self):
-        """
-        Gracefully stop all live streams and release Arena camera handles.
-        Call this when leaving Device page or closing app.
-        """
 
+    def close_all(self):
         print("[ARENA] Closing all Device Page cameras...")
 
-        # Stop all active streams first
         for serial in list(self.streaming_serials):
             try:
                 self.stop_live_stream(serial)
@@ -394,7 +449,6 @@ class ArenaCameraManager:
 
         self.streaming_serials.clear()
 
-        # Try stopping any camera that may still be open
         for serial, dev in list(self.devices.items()):
             try:
                 dev.stop_stream()
@@ -402,7 +456,6 @@ class ArenaCameraManager:
             except Exception:
                 pass
 
-        # Release Arena device handles
         try:
             if self.arena_available and self.system is not None and self.devices:
                 self.system.destroy_device()

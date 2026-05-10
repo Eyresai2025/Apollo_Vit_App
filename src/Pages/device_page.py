@@ -230,7 +230,7 @@ class DevicePage(QWidget):
         self.trigger_activation_combo = QComboBox()
         self.trigger_activation_combo.addItems(["RisingEdge", "FallingEdge"])
 
-        self.packet_size_input = QLineEdit("9000")
+        self.packet_size_input = QLineEdit("1500")
 
         self.live_line_count_label = QLabel("0 / 6000")
 
@@ -479,7 +479,7 @@ class DevicePage(QWidget):
             settings.get("trigger_activation", "RisingEdge")
         )
 
-        self.packet_size_input.setText(str(settings.get("packet_size", 9000)))
+        self.packet_size_input.setText(str(settings.get("packet_size", 1500)))
 
         self.live_line_count_label.setText(
             f"0 / {settings.get('height', 6000)}"
@@ -554,9 +554,17 @@ class DevicePage(QWidget):
         self.live_worker.frame_ready.connect(self.on_live_frame_ready)
         self.live_worker.status_signal.connect(self.on_live_status)
         self.live_worker.error_signal.connect(self.on_live_error)
+        self.live_worker.finished.connect(self.on_live_worker_finished)
 
         self.live_worker.start()
 
+    def on_live_worker_finished(self):
+        self.live_worker = None
+
+        self.start_preview_btn.setEnabled(True)
+        self.stop_preview_btn.setEnabled(False)
+        self.capture_one_btn.setEnabled(True)
+        
     def stop_live_preview(self):
         if self.live_worker:
             self.live_worker.stop()
@@ -598,7 +606,6 @@ class DevicePage(QWidget):
         self.start_preview_btn.setEnabled(True)
         self.stop_preview_btn.setEnabled(False)
         self.capture_one_btn.setEnabled(True)
-        self.live_worker = None
 
         self.capture_status_label.setText("Status: Live preview error")
         QMessageBox.critical(self, "Live Preview Error", error_msg)

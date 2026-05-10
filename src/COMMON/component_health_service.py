@@ -107,9 +107,9 @@ class ComponentHealthService:
         mode_map = {
             0: "UNKNOWN",
             1: "MANUAL",
-            2: "TEACHING",
-            3: "AUTO",
-            4: "FAULT",
+            2: "AUTO",
+            3: "FAULT",
+            4: "TEACHING",
         }
 
         return mode_map.get(mode_value, f"MODE {mode_value}")

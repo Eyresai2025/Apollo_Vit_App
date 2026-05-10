@@ -433,11 +433,13 @@ class AxisStatusPage(QWidget):
         item = QTableWidgetItem(str(text))
         item.setTextAlignment(Qt.AlignCenter)
 
-        if status == "OK":
+        if status in ("OK", "LIVE ONLY"):
             item.setForeground(Qt.darkGreen)
-        elif status in ("FAULT", "DISABLED", "NOT HOMED", "OUT OF RANGE"):
+
+        elif status in ("FAULT", "NOT HOMED", "OUT OF RANGE"):
             item.setForeground(Qt.red)
-        elif status == "UNKNOWN":
+
+        elif status in ("DISABLED", "UNKNOWN"):
             item.setForeground(Qt.darkYellow)
 
         self.table.setItem(row, col, item)

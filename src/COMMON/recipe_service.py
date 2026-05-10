@@ -63,13 +63,14 @@ class RecipeService:
     - partial F-045 axis target/live/delta view
     """
 
-    def __init__(self, media_path: str, env_path: Optional[str] = None):
+    def __init__(self, media_path: str, env_path: Optional[str] = None, plc_client=None):
         self.media_path = Path(media_path)
         self.project_root = self.media_path.parent
         self.env_path = env_path or str(self.project_root / ".env")
         self.env = load_env(self.env_path)
 
         self.deployment = _to_bool(self.env.get("DEPLOYMENT", "False"))
+        self.plc_client = plc_client
         self.recipe_col = get_collection(RECIPE_COLLECTION)
         self.new_sku_col = get_collection("New SKU")
 
@@ -83,6 +84,10 @@ class RecipeService:
             self.backup_dir = self.project_root / self.backup_dir
 
         self.backup_dir.mkdir(parents=True, exist_ok=True)
+
+
+    def set_plc_client(self, plc_client):
+        self.plc_client = plc_client
 
     def get_axis_count(self) -> int:
         axis_ids = []
@@ -111,29 +116,58 @@ class RecipeService:
 
         Production:
             reads AXIS_i_POS_DB / AXIS_i_POS_BYTE / AXIS_i_POS_TYPE from PLC.
+
+        IMPORTANT:
+            Uses shared PLC client from Test Mode when available.
+            If no shared client is available, creates only ONE temporary PLC client
+            for the full axis refresh, not one client per axis.
         """
         result: Dict[str, Dict[str, Any]] = {}
 
-        for axis_id in range(1, self.get_axis_count() + 1):
-            axis_key = f"axis_{axis_id:02d}"
-            axis_name = self.env.get(f"AXIS_{axis_id}_NAME", f"Axis {axis_id}")
+        client = plc_client or self.plc_client
+        own_client = False
 
-            try:
-                value = self._read_one_axis_position(axis_id, plc_client=plc_client)
-                status = "OK"
-            except Exception as e:
-                value = None
-                status = f"ERROR: {e}"
+        if self.deployment:
+            if snap7 is None:
+                raise RuntimeError("snap7 not installed")
 
-            result[axis_key] = {
-                "axis_id": axis_id,
-                "name": axis_name,
-                "value": value,
-                "status": status,
-                "source": "PLC" if self.deployment else "ENV_DEMO",
-            }
+            if client is None:
+                client = snap7.client.Client()
+                own_client = True
+                client.connect(
+                    self.env.get("PLC_IP", "192.168.10.1"),
+                    int(self.env.get("PLC_RACK", "0")),
+                    int(self.env.get("PLC_SLOT", "1")),
+                )
 
-        return result
+        try:
+            for axis_id in range(1, self.get_axis_count() + 1):
+                axis_key = f"axis_{axis_id:02d}"
+                axis_name = self.env.get(f"AXIS_{axis_id}_NAME", f"Axis {axis_id}")
+
+                try:
+                    value = self._read_one_axis_position(axis_id, plc_client=client)
+                    status = "OK"
+                except Exception as e:
+                    value = None
+                    status = f"ERROR: {e}"
+
+                result[axis_key] = {
+                    "axis_id": axis_id,
+                    "name": axis_name,
+                    "value": value,
+                    "status": status,
+                    "source": "PLC" if self.deployment else "ENV_DEMO",
+                }
+
+            return result
+
+        finally:
+            if own_client:
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
 
     def _read_one_axis_position(self, axis_id: int, plc_client=None):
         if not self.deployment:
@@ -157,19 +191,17 @@ class RecipeService:
         if snap7 is None:
             raise RuntimeError("snap7 not installed")
 
-        own_client = False
-        client = plc_client
+        client = plc_client or self.plc_client
 
         if client is None:
-            client = snap7.client.Client()
-            own_client = True
-            client.connect(
-                self.env.get("PLC_IP", "192.168.10.1"),
-                int(self.env.get("PLC_RACK", "0")),
-                int(self.env.get("PLC_SLOT", "1")),
+            raise RuntimeError(
+                "PLC client is not available. Run Test Mode first or pass plc_client to RecipeService."
             )
 
         try:
+            if hasattr(client, "get_connected") and not client.get_connected():
+                raise RuntimeError("Shared PLC client is disconnected")
+
             if data_type == "REAL":
                 data = client.db_read(db_no, byte, 4)
                 return float(get_real(data, 0))
@@ -188,12 +220,8 @@ class RecipeService:
 
             raise RuntimeError(f"Unsupported PLC data type: {data_type}")
 
-        finally:
-            if own_client:
-                try:
-                    client.disconnect()
-                except Exception:
-                    pass
+        except Exception as e:
+            raise RuntimeError(f"PLC read failed DB{db_no}, byte {byte}, type {data_type}: {e}")
 
     def build_recipe_doc(
         self,
@@ -339,7 +367,7 @@ class RecipeService:
         step = int(self.env.get("RECIPE_AXIS_STEP_BYTES", "4"))
 
         own_client = False
-        client = plc_client
+        client = plc_client or self.plc_client
 
         if client is None:
             client = snap7.client.Client()

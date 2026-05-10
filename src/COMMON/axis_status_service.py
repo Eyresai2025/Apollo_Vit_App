@@ -4,7 +4,7 @@ import os
 import struct
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
+from src.COMMON.db import get_collection
 
 class AxisStatusService:
     """
@@ -38,7 +38,7 @@ class AxisStatusService:
         self.plc_sku_byte = self._env_int("PLC_SKU_BYTE", 10)
         self.plc_sku_size = self._env_int("PLC_SKU_SIZE", 2)
         self.plc_sku_type = self.env.get("PLC_SKU_TYPE", "WORD").strip().upper()
-
+        self.recipe_col = get_collection("SKU Recipes")
     # ------------------------------------------------------------
     # ENV
     # ------------------------------------------------------------
@@ -82,7 +82,15 @@ class AxisStatusService:
             return float(str(val).strip())
         except Exception:
             return float(default)
-
+        
+    def _env_float_optional(self, key: str):
+        try:
+            val = self.env.get(key, "")
+            if val is None or str(val).strip() == "":
+                return None
+            return float(str(val).strip())
+        except Exception:
+            return None
     # ------------------------------------------------------------
     # HARDWARE STATE
     # ------------------------------------------------------------
@@ -425,34 +433,79 @@ class AxisStatusService:
 
         return {
             "index": index,
+            "axis_key": f"axis_{index:02d}",
             "name": self._env_str(p + "NAME", f"Axis {index}"),
 
-            "pos_db": self._env_int(p + "POS_DB", 120),
-            "pos_byte": self._env_int(p + "POS_BYTE", (index - 1) * 20),
+            "pos_db": self._env_int(p + "POS_DB", 0),
+            "pos_byte": self._env_int(p + "POS_BYTE", 0),
             "pos_type": self._env_str(p + "POS_TYPE", "REAL").upper(),
 
-            "enabled_db": self._env_int(p + "ENABLED_DB", 120),
-            "enabled_byte": self._env_int(p + "ENABLED_BYTE", 10 + ((index - 1) * 20)),
+            "enabled_configured": (p + "ENABLED_DB") in self.env,
+            "enabled_db": self._env_int(p + "ENABLED_DB", 0),
+            "enabled_byte": self._env_int(p + "ENABLED_BYTE", 0),
             "enabled_bit": self._env_int(p + "ENABLED_BIT", 0),
 
-            "homed_db": self._env_int(p + "HOMED_DB", 120),
-            "homed_byte": self._env_int(p + "HOMED_BYTE", 10 + ((index - 1) * 20)),
-            "homed_bit": self._env_int(p + "HOMED_BIT", 1),
+            "homed_configured": (p + "HOMED_DB") in self.env,
+            "homed_db": self._env_int(p + "HOMED_DB", 0),
+            "homed_byte": self._env_int(p + "HOMED_BYTE", 0),
+            "homed_bit": self._env_int(p + "HOMED_BIT", 0),
 
-            "fault_db": self._env_int(p + "FAULT_DB", 120),
-            "fault_byte": self._env_int(p + "FAULT_BYTE", 10 + ((index - 1) * 20)),
-            "fault_bit": self._env_int(p + "FAULT_BIT", 2),
+            "fault_configured": (p + "FAULT_DB") in self.env,
+            "fault_db": self._env_int(p + "FAULT_DB", 0),
+            "fault_byte": self._env_int(p + "FAULT_BYTE", 0),
+            "fault_bit": self._env_int(p + "FAULT_BIT", 0),
 
-            "alarm_db": self._env_int(p + "ALARM_DB", 120),
-            "alarm_byte": self._env_int(p + "ALARM_BYTE", 12 + ((index - 1) * 20)),
+            "alarm_configured": (p + "ALARM_DB") in self.env,
+            "alarm_db": self._env_int(p + "ALARM_DB", 0),
+            "alarm_byte": self._env_int(p + "ALARM_BYTE", 0),
             "alarm_size": self._env_int(p + "ALARM_SIZE", 2),
             "alarm_type": self._env_str(p + "ALARM_TYPE", "WORD").upper(),
 
-            "recipe_pos": self._env_float(p + "RECIPE_POS", 0.0),
+            "recipe_pos": self._env_float_optional(p + "RECIPE_POS"),
             "tolerance": self._env_float(p + "TOLERANCE", 1.0),
         }
+    
+    def _get_latest_recipe(self, sku_name: Optional[str]):
+        if not sku_name or sku_name == "UNKNOWN":
+            return None
 
-    def _read_axis(self, client, cfg: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return self.recipe_col.find_one(
+                {
+                    "type": "sku_recipe",
+                    "sku_name": sku_name,
+                },
+                sort=[("version", -1)]
+            )
+        except Exception:
+            return None
+
+
+    def _get_recipe_axis_position(self, recipe, axis_key: str):
+        if not recipe:
+            return None
+
+        camera_targets = recipe.get("camera_axis_targets", {}) or {}
+        laser_targets = recipe.get("laser_axis_targets", {}) or {}
+
+        raw = None
+
+        if axis_key in camera_targets:
+            raw = camera_targets.get(axis_key)
+        elif axis_key in laser_targets:
+            raw = laser_targets.get(axis_key)
+
+        if isinstance(raw, dict):
+            raw = raw.get("value")
+
+        try:
+            if raw is None or raw == "":
+                return None
+            return float(raw)
+        except Exception:
+            return None
+        
+    def _read_axis(self, client, cfg: Dict[str, Any], recipe_position=None) -> Dict[str, Any]:
         position = None
         enabled = None
         homed = None
@@ -471,33 +524,41 @@ class AxisStatusService:
                     cfg["pos_byte"],
                     cfg["pos_type"],
                 )
-                enabled = self._read_bool(
-                    client,
-                    cfg["enabled_db"],
-                    cfg["enabled_byte"],
-                    cfg["enabled_bit"],
-                )
-                homed = self._read_bool(
-                    client,
-                    cfg["homed_db"],
-                    cfg["homed_byte"],
-                    cfg["homed_bit"],
-                )
-                fault = self._read_bool(
-                    client,
-                    cfg["fault_db"],
-                    cfg["fault_byte"],
-                    cfg["fault_bit"],
-                )
-                alarm = self._read_number(
-                    client,
-                    cfg["alarm_db"],
-                    cfg["alarm_byte"],
-                    cfg["alarm_type"],
-                )
+
+                if cfg.get("enabled_configured"):
+                    enabled = self._read_bool(
+                        client,
+                        cfg["enabled_db"],
+                        cfg["enabled_byte"],
+                        cfg["enabled_bit"],
+                    )
+
+                if cfg.get("homed_configured"):
+                    homed = self._read_bool(
+                        client,
+                        cfg["homed_db"],
+                        cfg["homed_byte"],
+                        cfg["homed_bit"],
+                    )
+
+                if cfg.get("fault_configured"):
+                    fault = self._read_bool(
+                        client,
+                        cfg["fault_db"],
+                        cfg["fault_byte"],
+                        cfg["fault_bit"],
+                    )
+
+                if cfg.get("alarm_configured"):
+                    alarm = self._read_number(
+                        client,
+                        cfg["alarm_db"],
+                        cfg["alarm_byte"],
+                        cfg["alarm_type"],
+                    )
+
                 read_message = "PLC read attempted"
         else:
-            # Demo values only for UI validation
             position = cfg["recipe_pos"]
             enabled = True
             homed = True
@@ -505,9 +566,13 @@ class AxisStatusService:
             alarm = 0
             read_message = "DEPLOYMENT=False demo values"
 
+        final_recipe_pos = recipe_position
+        if final_recipe_pos is None:
+            final_recipe_pos = cfg.get("recipe_pos")
+
         status = self._calculate_axis_status(
             position=position,
-            recipe_pos=cfg["recipe_pos"],
+            recipe_pos=final_recipe_pos,
             tolerance=cfg["tolerance"],
             enabled=enabled,
             homed=homed,
@@ -519,7 +584,7 @@ class AxisStatusService:
             "name": cfg["name"],
 
             "current_position": position,
-            "recipe_position": cfg["recipe_pos"],
+            "recipe_position": final_recipe_pos,
             "tolerance": cfg["tolerance"],
 
             "enabled": enabled,
@@ -532,10 +597,10 @@ class AxisStatusService:
 
             "address_info": {
                 "position": f'DB{cfg["pos_db"]}.DBB{cfg["pos_byte"]} ({cfg["pos_type"]})',
-                "enabled": f'DB{cfg["enabled_db"]}.DBX{cfg["enabled_byte"]}.{cfg["enabled_bit"]}',
-                "homed": f'DB{cfg["homed_db"]}.DBX{cfg["homed_byte"]}.{cfg["homed_bit"]}',
-                "fault": f'DB{cfg["fault_db"]}.DBX{cfg["fault_byte"]}.{cfg["fault_bit"]}',
-                "alarm": f'DB{cfg["alarm_db"]}.DBB{cfg["alarm_byte"]} ({cfg["alarm_type"]})',
+                "enabled": f'DB{cfg["enabled_db"]}.DBX{cfg["enabled_byte"]}.{cfg["enabled_bit"]}' if cfg.get("enabled_configured") else "NOT CONFIGURED",
+                "homed": f'DB{cfg["homed_db"]}.DBX{cfg["homed_byte"]}.{cfg["homed_bit"]}' if cfg.get("homed_configured") else "NOT CONFIGURED",
+                "fault": f'DB{cfg["fault_db"]}.DBX{cfg["fault_byte"]}.{cfg["fault_bit"]}' if cfg.get("fault_configured") else "NOT CONFIGURED",
+                "alarm": f'DB{cfg["alarm_db"]}.DBB{cfg["alarm_byte"]} ({cfg["alarm_type"]})' if cfg.get("alarm_configured") else "NOT CONFIGURED",
             },
         }
 
@@ -548,16 +613,22 @@ class AxisStatusService:
         homed,
         fault,
     ) -> str:
-        if position is None or enabled is None or homed is None or fault is None:
+        if position is None:
             return "UNKNOWN"
 
-        if bool(fault):
+        if fault is True:
             return "FAULT"
 
-        if not bool(enabled):
+        # If no SKU recipe target is saved yet, still show live PLC value as good live-read.
+        # Do not mark it DISABLED just because servo enable is OFF in manual/idle condition.
+        if recipe_pos is None:
+            return "LIVE ONLY"
+
+        if enabled is False:
             return "DISABLED"
 
-        if not bool(homed):
+        # Only check homed if PLC has given homed value.
+        if homed is False:
             return "NOT HOMED"
 
         try:
@@ -576,20 +647,38 @@ class AxisStatusService:
         client = self._get_plc_client()
         sku_info = self._resolve_active_sku(selected_sku, client)
 
+        active_sku = sku_info.get("sku_name", "UNKNOWN")
+        recipe = self._get_latest_recipe(active_sku)
+
         axes = []
         for i in range(1, 13):
             cfg = self._axis_cfg(i)
-            axes.append(self._read_axis(client, cfg))
+            recipe_position = self._get_recipe_axis_position(
+                recipe,
+                cfg["axis_key"],
+            )
+            axes.append(
+                self._read_axis(
+                    client,
+                    cfg,
+                    recipe_position=recipe_position,
+                )
+            )
 
         overall_ok = bool(axes) and all(axis["status"] == "OK" for axis in axes)
+
+        if recipe:
+            recipe_status = "LOADED FROM SKU RECIPE"
+        else:
+            recipe_status = "LIVE PLC VALUES ONLY"
 
         return {
             "deployment": self.deployment,
             "sku_info": sku_info,
-            "active_sku": sku_info.get("sku_name", "UNKNOWN"),
+            "active_sku": active_sku,
             "sku_source": sku_info.get("source", "-"),
             "sku_message": sku_info.get("message", "-"),
-            "recipe_status": "LOADED FROM AXIS CONFIG",
+            "recipe_status": recipe_status,
             "overall_ok": overall_ok,
             "axes": axes,
         }

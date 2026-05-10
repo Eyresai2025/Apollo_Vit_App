@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (  # type: ignore
     QPushButton, QProgressBar, QMessageBox, QSizePolicy, QApplication,
     QGridLayout, QScrollArea, QDialog, QStackedWidget,
     QFormLayout, QLineEdit, QSpinBox,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QTableWidget, QTableWidgetItem, QHeaderView,QComboBox
 )
 
 from src.COMMON.common import load_env
@@ -317,6 +317,7 @@ class NewSKUPage(QWidget):
         gridfs_bucket: str = "fs",
         sku_meta=None,
         on_close=None,
+        plc_client=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -330,6 +331,7 @@ class NewSKUPage(QWidget):
         self.sku_meta = dict(sku_meta or {})
         self.sku_meta.pop("machine_serial", None)  # removed by requirement
         self.on_close = on_close
+        self.plc_client = plc_client
 
         self.labels = ["SIDE WALL 1", "SIDE WALL 2", "INNER SIDE", "TREAD", "BEAD"]
 
@@ -345,7 +347,10 @@ class NewSKUPage(QWidget):
         self.latest_preview_paths: Dict[str, str] = {}
         self.training_worker: Optional[TrainingWorker] = None
 
-        self.recipe_service = RecipeService(media_path=self.media_path)
+        self.recipe_service = RecipeService(
+            media_path=self.media_path,
+            plc_client=self.plc_client,
+        )
         self.recipe_doc: Dict[str, Any] = {}
         self.latest_training_summary: Dict[str, Any] = {}
         self.latest_validation_result: Dict[str, Any] = {}
@@ -360,7 +365,9 @@ class NewSKUPage(QWidget):
         self.training_page: Optional[QWidget] = None
         self.validation_page: Optional[QWidget] = None
         self.recipe_page: Optional[QWidget] = None
-
+        self.axis_entry_mode = "capture"
+        self.axis_entry_mode_combo = None
+        self.apply_manual_axis_btn = None
         self.axis_table: Optional[QTableWidget] = None
         self.validation_status_lbl: Optional[QLabel] = None
         self.validation_metrics_lbl: Optional[QLabel] = None
@@ -391,6 +398,12 @@ class NewSKUPage(QWidget):
         self.preview_timer.start(1500)
         QTimer.singleShot(0, self.refresh_preview_only)
 
+    def set_plc_client(self, plc_client):
+        self.plc_client = plc_client
+
+        if hasattr(self, "recipe_service") and self.recipe_service is not None:
+            if hasattr(self.recipe_service, "set_plc_client"):
+                self.recipe_service.set_plc_client(plc_client)
     # ======================================================================
     # THEME HELPERS
     # ======================================================================
@@ -904,6 +917,30 @@ class NewSKUPage(QWidget):
         hint.setObjectName("HintText")
         lay.addWidget(hint)
 
+        mode_row = QHBoxLayout()
+
+        mode_lbl = QLabel("Axis Entry Mode:")
+        mode_lbl.setObjectName("SectionTitle")
+        mode_row.addWidget(mode_lbl)
+
+        self.axis_entry_mode_combo = QComboBox()
+        self.axis_entry_mode_combo.addItems([
+            "Capture From Live PLC",
+            "Manual Entry From Software",
+        ])
+        self.axis_entry_mode_combo.setFixedHeight(34)
+        self.axis_entry_mode_combo.setMinimumWidth(240)
+        self.axis_entry_mode_combo.currentIndexChanged.connect(self._on_axis_entry_mode_changed)
+        mode_row.addWidget(self.axis_entry_mode_combo)
+
+        self.apply_manual_axis_btn = self._make_button("Apply Manual Targets", "primary")
+        self.apply_manual_axis_btn.clicked.connect(self._apply_manual_axis_targets_from_table)
+        self.apply_manual_axis_btn.setEnabled(False)
+        mode_row.addWidget(self.apply_manual_axis_btn)
+
+        mode_row.addStretch(1)
+        lay.addLayout(mode_row)
+
         self.axis_table = QTableWidget()
         self.axis_table.setColumnCount(7)
         self.axis_table.setHorizontalHeaderLabels([
@@ -933,7 +970,7 @@ class NewSKUPage(QWidget):
         lay.addLayout(btn_row)
 
         root.addWidget(card)
-        QTimer.singleShot(200, self._refresh_axis_table)
+        # QTimer.singleShot(200, self._refresh_axis_table)
 
     def _axis_group_for_id(self, axis_id: int) -> str:
         if axis_id in self.recipe_service.get_camera_axis_ids():
@@ -941,6 +978,44 @@ class NewSKUPage(QWidget):
         if axis_id in self.recipe_service.get_laser_axis_ids():
             return "laser"
         return "-"
+
+    def _on_axis_entry_mode_changed(self):
+        if self.axis_entry_mode_combo is None:
+            return
+
+        text = self.axis_entry_mode_combo.currentText().strip().lower()
+
+        if "manual" in text:
+            self.axis_entry_mode = "manual"
+            if self.apply_manual_axis_btn is not None:
+                self.apply_manual_axis_btn.setEnabled(True)
+
+            if self.axis_table is not None:
+                self.axis_table.setEditTriggers(
+                    QTableWidget.DoubleClicked |
+                    QTableWidget.EditKeyPressed |
+                    QTableWidget.AnyKeyPressed
+                )
+
+            if self.status_lbl is not None:
+                self.status_lbl.setText(
+                    "Manual Entry Mode: edit Camera Target / Laser Target columns, then click Apply Manual Targets."
+                )
+
+        else:
+            self.axis_entry_mode = "capture"
+            if self.apply_manual_axis_btn is not None:
+                self.apply_manual_axis_btn.setEnabled(False)
+
+            if self.axis_table is not None:
+                self.axis_table.setEditTriggers(QTableWidget.NoEditTriggers)
+
+            if self.status_lbl is not None:
+                self.status_lbl.setText(
+                    "Capture Mode: move axis using PLC/HMI, refresh live axis, then capture targets."
+                )
+
+        self._refresh_axis_table()
 
     def _refresh_axis_table(self):
         if self.axis_table is None:
@@ -990,6 +1065,23 @@ class NewSKUPage(QWidget):
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setTextAlignment(Qt.AlignCenter)
+
+                # In manual mode, allow editing only:
+                # col 4 = Camera Target
+                # col 5 = Laser Target
+                editable = False
+
+                if self.axis_entry_mode == "manual":
+                    if group == "camera" and col == 4:
+                        editable = True
+                    elif group == "laser" and col == 5:
+                        editable = True
+
+                if editable:
+                    item.setFlags(item.flags() | Qt.ItemIsEditable)
+                else:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+
                 self.axis_table.setItem(row, col, item)
 
     def _capture_axis_group(self, group: str):
@@ -1020,6 +1112,98 @@ class NewSKUPage(QWidget):
         self.recipe_doc[field_name] = targets
         self._refresh_axis_table()
         QMessageBox.information(self, title, f"{len(targets)} {group} axis targets captured successfully.")
+    
+    def _apply_manual_axis_targets_from_table(self, silent=False):
+        if self.axis_table is None:
+            return False
+
+        camera_targets = {}
+        laser_targets = {}
+
+        for row in range(self.axis_table.rowCount()):
+            group_item = self.axis_table.item(row, 0)
+            axis_item = self.axis_table.item(row, 1)
+            name_item = self.axis_table.item(row, 2)
+            camera_item = self.axis_table.item(row, 4)
+            laser_item = self.axis_table.item(row, 5)
+
+            if group_item is None or axis_item is None:
+                continue
+
+            group = group_item.text().strip().upper()
+            axis_key = axis_item.text().strip()
+            axis_name = name_item.text().strip() if name_item else axis_key
+
+            try:
+                axis_id = int(axis_key.replace("axis_", ""))
+            except Exception:
+                axis_id = row + 1
+
+            if group == "CAMERA":
+                raw_value = camera_item.text().strip() if camera_item else ""
+                if raw_value == "":
+                    continue
+
+                try:
+                    value = float(raw_value)
+                except Exception:
+                    if not silent:
+                        QMessageBox.warning(
+                            self,
+                            "Manual Axis Entry",
+                            f"Invalid camera target value at {axis_key}: {raw_value}"
+                        )
+                    return False
+
+                camera_targets[axis_key] = {
+                    "axis_id": axis_id,
+                    "name": axis_name,
+                    "value": value,
+                    "captured_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "source": "MANUAL_ENTRY",
+                }
+
+            elif group == "LASER":
+                raw_value = laser_item.text().strip() if laser_item else ""
+                if raw_value == "":
+                    continue
+
+                try:
+                    value = float(raw_value)
+                except Exception:
+                    if not silent:
+                        QMessageBox.warning(
+                            self,
+                            "Manual Axis Entry",
+                            f"Invalid laser target value at {axis_key}: {raw_value}"
+                        )
+                    return False
+
+                laser_targets[axis_key] = {
+                    "axis_id": axis_id,
+                    "name": axis_name,
+                    "value": value,
+                    "captured_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "source": "MANUAL_ENTRY",
+                }
+
+        if camera_targets:
+            self.recipe_doc["camera_axis_targets"] = camera_targets
+
+        if laser_targets:
+            self.recipe_doc["laser_axis_targets"] = laser_targets
+
+        self._refresh_axis_table()
+
+        if not silent:
+            QMessageBox.information(
+                self,
+                "Manual Axis Targets Applied",
+                f"Camera targets: {len(camera_targets)}\n"
+                f"Laser targets: {len(laser_targets)}"
+            )
+
+        return True
 
     # ======================================================================
     # F-017 IMAGE CAPTURE
@@ -1897,6 +2081,11 @@ class NewSKUPage(QWidget):
         if not sku_name or sku_name == "unknown_sku":
             raise ValueError("Complete SKU Setup before saving recipe.")
 
+        if getattr(self, "axis_entry_mode", "capture") == "manual":
+            ok = self._apply_manual_axis_targets_from_table(silent=True)
+            if not ok:
+                raise ValueError("Manual axis target entry has invalid values.")
+
         camera_targets = self.recipe_doc.get("camera_axis_targets", {})
         laser_targets = self.recipe_doc.get("laser_axis_targets", {})
         if not camera_targets:
@@ -1946,7 +2135,11 @@ class NewSKUPage(QWidget):
     def _save_recipe_final(self):
         try:
             recipe_doc = self._build_final_recipe_doc()
-            result = self.recipe_service.save_recipe(recipe_doc, plc_client=None, write_to_plc=None)
+            result = self.recipe_service.save_recipe(
+                recipe_doc,
+                plc_client=self.plc_client,
+                write_to_plc=None,
+            )
             msg = (
                 f"Recipe saved successfully.\n\n"
                 f"SKU: {result.get('sku_name')}\n"

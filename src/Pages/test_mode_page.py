@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPixmap
 
 from src.COMMON.full_hardware_check import start_full_hardware_check_from_test_page
+from src.COMMON.db import save_test_mode_result
 
 
 def _card():
@@ -58,6 +59,7 @@ class TestModePage(QWidget):
         self.media_path = media_path
 
         self.last_hardware_check_result = None
+        self.last_hardware_check_db_id = None
         self._hardware_check_thread = None
         self._hardware_check_worker = None
         self.poll_timer = None
@@ -398,6 +400,30 @@ class TestModePage(QWidget):
             key: cb.isChecked()
             for key, cb in self.light_checks.items()
         }
+    
+    def save_hardware_check_result_to_db(self, result):
+        """
+        Save Full Hardware Check result to MongoDB.
+
+        This is intentionally non-blocking for the UI flow:
+        if MongoDB save fails, Test Mode still continues.
+        """
+        try:
+            inserted = save_test_mode_result(
+                result=result,
+                operator="",
+            )
+
+            self.last_hardware_check_db_id = str(inserted.inserted_id)
+
+            print(
+                f"[TEST MODE][DB] Hardware check saved to "
+                f"'Test Mode Results' | _id={self.last_hardware_check_db_id}"
+            )
+
+        except Exception as e:
+            self.last_hardware_check_db_id = None
+            print(f"[TEST MODE][DB][ERROR] Failed to save hardware check result: {e}")
 
     def run_full_hardware_check(self):
         start_full_hardware_check_from_test_page(

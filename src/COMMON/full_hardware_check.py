@@ -68,6 +68,10 @@ def _env_float(env, key, default):
         return float(str(value).strip())
     except Exception:
         return float(default)
+    
+def _env_bool(env, key, default=False):
+    value = str(env.get(key, str(default))).strip().lower()
+    return value in ("1", "true", "yes", "y", "on")
 
 
 def _set_status(dot, txt, state, msg):
@@ -145,7 +149,8 @@ class FullHardwareChecker:
         self.plc_slot = _env_int(self.env, "PLC_SLOT", 1)
         self.plc_retry_count = _env_int(self.env, "PLC_RETRY_COUNT", 3)
         self.plc_retry_delay_sec = _env_float(self.env, "PLC_RETRY_DELAY_SEC", 1.0)
-
+        self.require_lights = _env_bool(self.env, "REQUIRE_LIGHTS", True)
+        self.require_laser = _env_bool(self.env, "REQUIRE_LASER", False)
         self.app_ok_bit = {
             "db": _env_int(self.env, "APP_OK_DB", 100),
             "byte": _env_int(self.env, "APP_OK_BYTE", 0),
@@ -393,8 +398,10 @@ class FullHardwareChecker:
                 manager.connect_all()
 
             connected_serials = set()
+
             for cam in manager.cameras:
-                connected_serials.add(str(getattr(cam, "serial_number", "")))
+                if bool(getattr(cam, "is_connected", False)):
+                    connected_serials.add(str(getattr(cam, "serial_number", "")))
 
             camera_status = []
             for cfg in expected_configs:
@@ -528,12 +535,21 @@ class FullHardwareChecker:
         result["details"]["laser"] = laser_detail
         result["messages"].append(laser_msg)
 
+        lights_required_ok = result["lights_ok"] if self.require_lights else True
+        laser_required_ok = result["laser_ok"] if self.require_laser else True
+
         checks_ok_before_app_bit = (
-            result["lights_ok"]
+            lights_required_ok
             and result["plc_ok"]
             and result["camera_ok"]
-            and result["laser_ok"]
+            and laser_required_ok
         )
+
+        if not self.require_lights:
+            result["messages"].append("Light check is bypassed using REQUIRE_LIGHTS=False.")
+
+        if not self.require_laser:
+            result["messages"].append("Laser check is bypassed using REQUIRE_LASER=False.")
 
         app_ok_sent, app_ok_detail = self._send_application_ok_bit(
             plc_client,
@@ -612,6 +628,14 @@ def start_full_hardware_check_from_test_page(test_page, media_path):
         _HARDWARE_STATE["last_result"] = result
         _HARDWARE_STATE["plc_client"] = result.get("plc_client")
         _HARDWARE_STATE["multi_cam"] = result.get("multi_cam")
+
+        # Save Test Mode result to MongoDB.
+        # This must happen after result is available, but it should not block hardware state.
+        try:
+            if hasattr(test_page, "save_hardware_check_result_to_db"):
+                test_page.save_hardware_check_result_to_db(result)
+        except Exception as e:
+            print(f"[TEST MODE][DB][ERROR] Failed to save result from hardware check callback: {e}")
 
         messages = "\n".join(result.get("messages", []))
 

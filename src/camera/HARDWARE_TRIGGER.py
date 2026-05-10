@@ -686,7 +686,7 @@ class MultiCameraManager:
     def set_plc_interface(self, plc_interface):
         self.plc_interface = plc_interface
 
-    def connect_all(self):
+    def connect_all(self, fail_fast=False):
         mode_str = "HARDWARE" if TRIGGER_MODE == "hardware" else "SOFTWARE / PLC"
 
         print("")
@@ -701,33 +701,43 @@ class MultiCameraManager:
         print("=" * 60)
 
         for cam in self.cameras:
-            cam.connect_and_configure()
+            try:
+                cam.connect_and_configure()
 
-        print("All cameras connected and configured.")
+            except Exception as e:
+                cam.is_connected = False
+                cam.device = None
+                cam.nodemap = None
+
+                print(
+                    f"[CAMERA][ERROR] "
+                    f"side={cam.side_name} | serial={cam.serial_number} | failed: {e}"
+                )
+
+                if fail_fast:
+                    raise
+
+        connected = [
+            f"{cam.side_name}:{cam.serial_number}"
+            for cam in self.cameras
+            if cam.is_connected
+        ]
+
+        missing = [
+            f"{cam.side_name}:{cam.serial_number}"
+            for cam in self.cameras
+            if not cam.is_connected
+        ]
+
         print("")
+        print("[CAMERA] Connected cameras:", connected)
+        print("[CAMERA] Missing/failed cameras:", missing)
 
-    def start_all_streams(self):
-        if self._streams_started:
-            return
-
-        mode_str = (
-            "hardware trigger waiting"
-            if TRIGGER_MODE == "hardware"
-            else "continuous streaming"
-        )
+        if not connected:
+            raise RuntimeError("No configured Lucid cameras connected.")
 
         print("")
-        print("=" * 60)
-        print(f"Starting streams on {len(self.cameras)} camera(s) - {mode_str}")
-        print("=" * 60)
-
-        for cam in self.cameras:
-            cam.start_stream()
-
-        self._streams_started = True
-
-        print("All camera streams started.")
-        print("")
+        return len(missing) == 0
 
     def stop_all_streams(self):
         print("")
