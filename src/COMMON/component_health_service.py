@@ -35,7 +35,7 @@ class ComponentHealthService:
         self.plc_mode_db = self._env_int("PLC_MODE_DB", 100)
         self.plc_mode_byte = self._env_int("PLC_MODE_BYTE", 2)
         self.plc_mode_size = self._env_int("PLC_MODE_SIZE", 2)
-
+        self.require_laser = self._env_bool("REQUIRE_LASER", False)
         self._storage_cache = None
         self._storage_cache_time = 0
         self._storage_cache_interval_sec = 30
@@ -81,7 +81,13 @@ class ComponentHealthService:
             return float(str(value).strip())
         except Exception:
             return float(default)
+    def _env_bool(self, key, default=False):
+        value = self.env.get(key, "")
 
+        if value is None or str(value).strip() == "":
+            return bool(default)
+
+        return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
     # ------------------------------------------------------------
     # PLC SMALL READ HELPERS
     # ------------------------------------------------------------
@@ -102,8 +108,19 @@ class ComponentHealthService:
 
     def _decode_mode(self, mode_value):
         """
-        Update this mapping after PLC team gives final mode word values.
+        PLC mode mapping from PLC team:
+            0 = UNKNOWN
+            1 = MANUAL
+            2 = AUTO
+            3 = FAULT
+            4 = TEACHING
         """
+
+        try:
+            mode_value = int(mode_value)
+        except Exception:
+            return "UNKNOWN"
+
         mode_map = {
             0: "UNKNOWN",
             1: "MANUAL",
@@ -112,7 +129,7 @@ class ComponentHealthService:
             4: "TEACHING",
         }
 
-        return mode_map.get(mode_value, f"MODE {mode_value}")
+        return mode_map.get(mode_value, "UNKNOWN")
 
     # ------------------------------------------------------------
     # GPU
@@ -318,8 +335,14 @@ class ComponentHealthService:
                 return result
 
             mode_text = self._decode_mode(raw_mode)
+
+            print(
+                f"[PLC MODE] Raw DB{self.plc_mode_db}.DBW{self.plc_mode_byte} = "
+                f"{raw_mode} -> {mode_text}"
+            )
+
             result["mode"] = mode_text
-            result["mode_ok"] = mode_text not in ("UNKNOWN", "FAULT")
+            result["mode_ok"] = mode_text in ("MANUAL", "AUTO", "TEACHING")
             result["text"] = f"Mode: {mode_text}"
 
         except Exception:
@@ -426,6 +449,7 @@ class ComponentHealthService:
         storage = self._check_storage()
         mode = self._check_machine_mode(state)
 
+        # All items shown in Live Page component health
         items = {
             "plc": plc,
             "cameras": cameras,
@@ -435,17 +459,33 @@ class ComponentHealthService:
             "app_ok": app_ok,
         }
 
+        # Only these items decide System READY / NOT READY
+        required_items = {
+            "plc": plc,
+            "cameras": cameras,
+            "gpu": gpu,
+            "storage": storage,
+            "app_ok": app_ok,
+        }
+
+        # Laser should block READY only if REQUIRE_LASER=True
+        if self.require_laser:
+            required_items["laser"] = laser
+
+        system_ok = all(item["ok"] for item in required_items.values())
+
         if inspection_running:
             system_text = "INSPECTION RUNNING"
-        elif all(item["ok"] for item in items.values()):
+        elif system_ok:
             system_text = "READY"
         else:
             system_text = "NOT READY"
 
         return {
             "timestamp": time.time(),
-            "system_ok": all(item["ok"] for item in items.values()),
+            "system_ok": system_ok,
             "system_text": system_text,
             "mode": mode,
             "items": items,
+            "required_items": required_items,
         }

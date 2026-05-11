@@ -909,11 +909,15 @@ class NewSKUPage(QWidget):
         lay.setSpacing(12)
 
         lay.addLayout(self._section_header(
-            "Teaching Mode — Axis Position Capture",
-            "Jog the machine axis to the required inspection position, then capture camera and laser standoff positions separately.",
+            "Teaching Mode — Recipe Target Capture",
+            "Create recipe target values from live servo positions or manual software entry. "
+            "One physical servo axis can be used by camera and laser targets separately.",
         ))
 
-        hint = QLabel("Camera axis targets and laser axis targets are stored as separate recipe fields.")
+        hint = QLabel(
+            "Production mode uses RECIPE_TARGET_x configuration from .env. "
+            "DB74 live servo positions are read only. Recipe targets are saved to MongoDB and later written to DB130."
+        )
         hint.setObjectName("HintText")
         lay.addWidget(hint)
 
@@ -942,9 +946,17 @@ class NewSKUPage(QWidget):
         lay.addLayout(mode_row)
 
         self.axis_table = QTableWidget()
-        self.axis_table.setColumnCount(7)
+        self.axis_table.setColumnCount(9)
         self.axis_table.setHorizontalHeaderLabels([
-            "Group", "Axis", "Name", "Live Position", "Camera Target", "Laser Target", "Delta"
+            "Group",
+            "Target Key",
+            "Target Name",
+            "Physical Axis",
+            "Axis Name",
+            "Servo IP",
+            "Live Position",
+            "Target Value",
+            "Delta",
         ])
         self.axis_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.axis_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -953,16 +965,24 @@ class NewSKUPage(QWidget):
         lay.addWidget(self.axis_table, 1)
 
         btn_row = QHBoxLayout()
+
         refresh_btn = self._make_button("Refresh Live Axis", "secondary")
         refresh_btn.clicked.connect(self._refresh_axis_table)
-        capture_camera_btn = self._make_button("Capture Camera Axis Targets", "primary")
+
+        capture_all_btn = self._make_button("Capture All Live Targets", "primary")
+        capture_all_btn.clicked.connect(lambda: self._capture_axis_group("all"))
+
+        capture_camera_btn = self._make_button("Capture Machine/Camera Targets", "primary")
         capture_camera_btn.clicked.connect(lambda: self._capture_axis_group("camera"))
-        capture_laser_btn = self._make_button("Capture Laser Axis Targets", "primary")
+
+        capture_laser_btn = self._make_button("Capture Laser Targets", "primary")
         capture_laser_btn.clicked.connect(lambda: self._capture_axis_group("laser"))
+
         next_btn = self._make_button("Next: Capture Images", "secondary")
         next_btn.clicked.connect(lambda: self._switch_tab(TAB_CAPTURE))
 
         btn_row.addWidget(refresh_btn)
+        btn_row.addWidget(capture_all_btn)
         btn_row.addWidget(capture_camera_btn)
         btn_row.addWidget(capture_laser_btn)
         btn_row.addStretch(1)
@@ -970,14 +990,9 @@ class NewSKUPage(QWidget):
         lay.addLayout(btn_row)
 
         root.addWidget(card)
+
         # QTimer.singleShot(200, self._refresh_axis_table)
 
-    def _axis_group_for_id(self, axis_id: int) -> str:
-        if axis_id in self.recipe_service.get_camera_axis_ids():
-            return "camera"
-        if axis_id in self.recipe_service.get_laser_axis_ids():
-            return "laser"
-        return "-"
 
     def _on_axis_entry_mode_changed(self):
         if self.axis_entry_mode_combo is None:
@@ -1017,65 +1032,146 @@ class NewSKUPage(QWidget):
 
         self._refresh_axis_table()
 
+    def _make_recipe_target_doc(self, cfg: Dict[str, Any], value, source: str) -> Dict[str, Any]:
+        axis_id = int(cfg.get("axis_id", 0) or 0)
+        axis_key = cfg.get("axis_key") or (f"axis_{axis_id:02d}" if axis_id > 0 else "")
+
+        return {
+            "target_key": cfg.get("target_key", ""),
+            "target_index": cfg.get("target_index"),
+            "group": str(cfg.get("group", "")).upper(),
+
+            "axis_id": axis_id,
+            "axis_key": axis_key,
+            "axis_name": cfg.get("axis_name", ""),
+            "axis_ip": cfg.get("axis_ip", ""),
+
+            "target_name": cfg.get("target_name", ""),
+            "value": None if value is None or value == "" else float(value),
+
+            "write_db": cfg.get("write_db"),
+            "write_byte": cfg.get("write_byte"),
+            "type": cfg.get("type", "REAL"),
+
+            "captured_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "source": source,
+        }
+
+
+    def _sync_legacy_axis_targets_from_recipe_targets(self):
+        """
+        Keep old fields for backward compatibility:
+            camera_axis_targets
+            laser_axis_targets
+
+        New production field:
+            recipe_axis_targets
+
+        Old fields are no longer the main production source.
+        """
+        recipe_targets = self.recipe_doc.get("recipe_axis_targets", {}) or {}
+
+        camera_targets = {}
+        laser_targets = {}
+
+        for target_key, target in recipe_targets.items():
+            group = str(target.get("group", "")).upper()
+
+            legacy_item = {
+                "target_key": target_key,
+                "axis_id": target.get("axis_id"),
+                "axis_key": target.get("axis_key"),
+                "name": target.get("target_name") or target.get("axis_name"),
+                "axis_name": target.get("axis_name"),
+                "axis_ip": target.get("axis_ip"),
+                "value": target.get("value"),
+                "captured_at": target.get("captured_at"),
+                "source": target.get("source"),
+                "write_db": target.get("write_db"),
+                "write_byte": target.get("write_byte"),
+                "type": target.get("type", "REAL"),
+            }
+
+            if group in ("MACHINE", "CAMERA"):
+                camera_targets[target_key] = legacy_item
+            elif group == "LASER":
+                laser_targets[target_key] = legacy_item
+
+        self.recipe_doc["camera_axis_targets"] = camera_targets
+        self.recipe_doc["laser_axis_targets"] = laser_targets
+
     def _refresh_axis_table(self):
         if self.axis_table is None:
             return
+
         try:
             positions = self.recipe_service.read_current_axis_positions()
+            target_configs = self.recipe_service.get_recipe_target_configs()
         except Exception as e:
             self.axis_table.setRowCount(1)
+            self.axis_table.setColumnCount(2)
+            self.axis_table.setHorizontalHeaderLabels(["ERROR", "Message"])
             self.axis_table.setItem(0, 0, QTableWidgetItem("ERROR"))
             self.axis_table.setItem(0, 1, QTableWidgetItem(str(e)))
             return
 
-        self.axis_table.setRowCount(len(positions))
-        camera_targets = self.recipe_doc.get("camera_axis_targets", {}) or {}
-        laser_targets = self.recipe_doc.get("laser_axis_targets", {}) or {}
+        self.axis_table.setColumnCount(9)
+        self.axis_table.setHorizontalHeaderLabels([
+            "Group",
+            "Target Key",
+            "Target Name",
+            "Physical Axis",
+            "Axis Name",
+            "Servo IP",
+            "Live Position",
+            "Target Value",
+            "Delta",
+        ])
 
-        for row, axis_key in enumerate(sorted(positions.keys())):
-            info = positions[axis_key]
-            axis_id = int(info.get("axis_id", row + 1))
+        recipe_targets = self.recipe_doc.get("recipe_axis_targets", {}) or {}
+
+        self.axis_table.setRowCount(len(target_configs))
+
+        for row, cfg in enumerate(target_configs):
+            target_key = cfg.get("target_key", "")
+            group = str(cfg.get("group", "")).upper()
+
+            axis_id = int(cfg.get("axis_id", row + 1) or row + 1)
+            axis_key = cfg.get("axis_key") or f"axis_{axis_id:02d}"
+
+            info = positions.get(axis_key, {}) or {}
             live_value = info.get("value")
-            group = self._axis_group_for_id(axis_id)
 
-            camera_target = camera_targets.get(axis_key, "")
-            laser_target = laser_targets.get(axis_key, "")
-            if isinstance(camera_target, dict):
-                camera_target = camera_target.get("value", "")
-            if isinstance(laser_target, dict):
-                laser_target = laser_target.get("value", "")
+            saved_target = recipe_targets.get(target_key, {}) or {}
+            target_value = saved_target.get("value", "")
 
-            active_target = camera_target if group == "camera" else laser_target
             delta = ""
             try:
-                if live_value is not None and active_target != "":
-                    delta = f"{float(live_value) - float(active_target):.3f}"
+                if live_value is not None and target_value != "":
+                    delta = f"{float(live_value) - float(target_value):.3f}"
             except Exception:
                 delta = ""
 
             values = [
-                group.upper(),
+                group,
+                target_key,
+                str(cfg.get("target_name", "")),
                 axis_key,
-                str(info.get("name", "")),
+                str(cfg.get("axis_name", "")),
+                str(cfg.get("axis_ip", "")),
                 "" if live_value is None else f"{float(live_value):.3f}",
-                "" if camera_target == "" else f"{float(camera_target):.3f}",
-                "" if laser_target == "" else f"{float(laser_target):.3f}",
+                "" if target_value == "" or target_value is None else f"{float(target_value):.3f}",
                 delta,
             ]
+
             for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
+                item = QTableWidgetItem(str(value))
                 item.setTextAlignment(Qt.AlignCenter)
 
-                # In manual mode, allow editing only:
-                # col 4 = Camera Target
-                # col 5 = Laser Target
+                # In manual mode, allow editing only Target Value column.
                 editable = False
-
-                if self.axis_entry_mode == "manual":
-                    if group == "camera" and col == 4:
-                        editable = True
-                    elif group == "laser" and col == 5:
-                        editable = True
+                if self.axis_entry_mode == "manual" and col == 7:
+                    editable = True
 
                 if editable:
                     item.setFlags(item.flags() | Qt.ItemIsEditable)
@@ -1085,122 +1181,159 @@ class NewSKUPage(QWidget):
                 self.axis_table.setItem(row, col, item)
 
     def _capture_axis_group(self, group: str):
-        positions = self.recipe_service.read_current_axis_positions()
-        if group == "camera":
-            wanted_ids = self.recipe_service.get_camera_axis_ids()
-            field_name = "camera_axis_targets"
-            title = "Camera Axis Targets"
-        else:
-            wanted_ids = self.recipe_service.get_laser_axis_ids()
-            field_name = "laser_axis_targets"
-            title = "Laser Axis Targets"
+        """
+        Capture recipe target values from live PLC servo positions.
 
-        targets = {}
-        for axis_id in wanted_ids:
-            axis_key = f"axis_{axis_id:02d}"
+        group:
+            all     -> capture all RECIPE_TARGET rows
+            camera  -> capture MACHINE + CAMERA target rows
+            laser   -> capture LASER target rows
+        """
+        try:
+            positions = self.recipe_service.read_current_axis_positions()
+            target_configs = self.recipe_service.get_recipe_target_configs()
+        except Exception as e:
+            QMessageBox.critical(self, "Axis Capture Error", str(e))
+            return
+
+        wanted_group = str(group or "all").strip().lower()
+
+        existing = dict(self.recipe_doc.get("recipe_axis_targets", {}) or {})
+        captured_count = 0
+
+        for cfg in target_configs:
+            cfg_group = str(cfg.get("group", "")).upper()
+
+            if wanted_group == "camera":
+                if cfg_group not in ("MACHINE", "CAMERA"):
+                    continue
+            elif wanted_group == "laser":
+                if cfg_group != "LASER":
+                    continue
+            elif wanted_group == "all":
+                pass
+            else:
+                continue
+
+            axis_id = int(cfg.get("axis_id", 0) or 0)
+            axis_key = cfg.get("axis_key") or f"axis_{axis_id:02d}"
+
             info = positions.get(axis_key)
             if not info:
                 continue
-            targets[axis_key] = {
-                "axis_id": axis_id,
-                "name": info.get("name", f"Axis {axis_id}"),
-                "value": info.get("value"),
-                "captured_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "source": info.get("source", ""),
-            }
 
-        self.recipe_doc[field_name] = targets
+            live_value = info.get("value")
+            if live_value is None:
+                continue
+
+            target_key = cfg.get("target_key", "")
+            if not target_key:
+                continue
+
+            existing[target_key] = self._make_recipe_target_doc(
+                cfg=cfg,
+                value=live_value,
+                source="PLC_LIVE_CAPTURE",
+            )
+            captured_count += 1
+
+        self.recipe_doc["recipe_axis_targets"] = existing
+        self._sync_legacy_axis_targets_from_recipe_targets()
+
         self._refresh_axis_table()
-        QMessageBox.information(self, title, f"{len(targets)} {group} axis targets captured successfully.")
+
+        title = {
+            "all": "All Recipe Targets",
+            "camera": "Machine/Camera Recipe Targets",
+            "laser": "Laser Recipe Targets",
+        }.get(wanted_group, "Recipe Targets")
+
+        QMessageBox.information(
+            self,
+            title,
+            f"{captured_count} target values captured successfully."
+        )
     
     def _apply_manual_axis_targets_from_table(self, silent=False):
+        """
+        Apply manually typed target values from the Axis Teaching table.
+
+        Only column 7 = Target Value is editable in manual mode.
+        """
         if self.axis_table is None:
             return False
 
-        camera_targets = {}
-        laser_targets = {}
+        target_cfg_map = self.recipe_service.get_recipe_target_config_map()
+
+        recipe_targets = {}
 
         for row in range(self.axis_table.rowCount()):
             group_item = self.axis_table.item(row, 0)
-            axis_item = self.axis_table.item(row, 1)
-            name_item = self.axis_table.item(row, 2)
-            camera_item = self.axis_table.item(row, 4)
-            laser_item = self.axis_table.item(row, 5)
+            target_key_item = self.axis_table.item(row, 1)
+            target_value_item = self.axis_table.item(row, 7)
 
-            if group_item is None or axis_item is None:
+            if target_key_item is None:
                 continue
 
-            group = group_item.text().strip().upper()
-            axis_key = axis_item.text().strip()
-            axis_name = name_item.text().strip() if name_item else axis_key
+            target_key = target_key_item.text().strip()
+            if not target_key:
+                continue
+
+            raw_value = target_value_item.text().strip() if target_value_item else ""
+
+            # Blank value means not entered yet.
+            if raw_value == "":
+                continue
 
             try:
-                axis_id = int(axis_key.replace("axis_", ""))
+                value = float(raw_value)
             except Exception:
-                axis_id = row + 1
+                if not silent:
+                    QMessageBox.warning(
+                        self,
+                        "Manual Axis Entry",
+                        f"Invalid target value for {target_key}: {raw_value}"
+                    )
+                return False
 
-            if group == "CAMERA":
-                raw_value = camera_item.text().strip() if camera_item else ""
-                if raw_value == "":
-                    continue
+            cfg = target_cfg_map.get(target_key)
+            if not cfg:
+                if not silent:
+                    QMessageBox.warning(
+                        self,
+                        "Manual Axis Entry",
+                        f"Target config not found for: {target_key}"
+                    )
+                return False
 
-                try:
-                    value = float(raw_value)
-                except Exception:
-                    if not silent:
-                        QMessageBox.warning(
-                            self,
-                            "Manual Axis Entry",
-                            f"Invalid camera target value at {axis_key}: {raw_value}"
-                        )
-                    return False
+            recipe_targets[target_key] = self._make_recipe_target_doc(
+                cfg=cfg,
+                value=value,
+                source="MANUAL_ENTRY",
+            )
 
-                camera_targets[axis_key] = {
-                    "axis_id": axis_id,
-                    "name": axis_name,
-                    "value": value,
-                    "captured_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "source": "MANUAL_ENTRY",
-                }
-
-            elif group == "LASER":
-                raw_value = laser_item.text().strip() if laser_item else ""
-                if raw_value == "":
-                    continue
-
-                try:
-                    value = float(raw_value)
-                except Exception:
-                    if not silent:
-                        QMessageBox.warning(
-                            self,
-                            "Manual Axis Entry",
-                            f"Invalid laser target value at {axis_key}: {raw_value}"
-                        )
-                    return False
-
-                laser_targets[axis_key] = {
-                    "axis_id": axis_id,
-                    "name": axis_name,
-                    "value": value,
-                    "captured_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "source": "MANUAL_ENTRY",
-                }
-
-        if camera_targets:
-            self.recipe_doc["camera_axis_targets"] = camera_targets
-
-        if laser_targets:
-            self.recipe_doc["laser_axis_targets"] = laser_targets
+        if recipe_targets:
+            self.recipe_doc["recipe_axis_targets"] = recipe_targets
+            self._sync_legacy_axis_targets_from_recipe_targets()
 
         self._refresh_axis_table()
 
         if not silent:
+            machine_camera_count = sum(
+                1 for v in recipe_targets.values()
+                if str(v.get("group", "")).upper() in ("MACHINE", "CAMERA")
+            )
+            laser_count = sum(
+                1 for v in recipe_targets.values()
+                if str(v.get("group", "")).upper() == "LASER"
+            )
+
             QMessageBox.information(
                 self,
-                "Manual Axis Targets Applied",
-                f"Camera targets: {len(camera_targets)}\n"
-                f"Laser targets: {len(laser_targets)}"
+                "Manual Recipe Targets Applied",
+                f"Total targets: {len(recipe_targets)}\n"
+                f"Machine/Camera targets: {machine_camera_count}\n"
+                f"Laser targets: {laser_count}"
             )
 
         return True
@@ -2081,17 +2214,49 @@ class NewSKUPage(QWidget):
         if not sku_name or sku_name == "unknown_sku":
             raise ValueError("Complete SKU Setup before saving recipe.")
 
+        # If operator typed values manually but forgot Apply Manual Targets,
+        # capture the table values before saving.
         if getattr(self, "axis_entry_mode", "capture") == "manual":
             ok = self._apply_manual_axis_targets_from_table(silent=True)
             if not ok:
-                raise ValueError("Manual axis target entry has invalid values.")
+                raise ValueError("Manual recipe target entry has invalid values.")
 
-        camera_targets = self.recipe_doc.get("camera_axis_targets", {})
-        laser_targets = self.recipe_doc.get("laser_axis_targets", {})
-        if not camera_targets:
-            raise ValueError("Camera axis targets are not captured.")
-        if not laser_targets:
-            raise ValueError("Laser axis targets are not captured.")
+        recipe_axis_targets = self.recipe_doc.get("recipe_axis_targets", {}) or {}
+        target_configs = self.recipe_service.get_recipe_target_configs()
+
+        if not recipe_axis_targets:
+            raise ValueError(
+                "Recipe target values are not captured.\n\n"
+                "Go to Axis Teaching and either:\n"
+                "1. Click Capture All Live Targets, or\n"
+                "2. Enter Target Values manually and click Apply Manual Targets."
+            )
+
+        required_keys = [
+            cfg.get("target_key")
+            for cfg in target_configs
+            if cfg.get("target_key")
+        ]
+
+        missing_keys = [
+            key for key in required_keys
+            if key not in recipe_axis_targets
+            or recipe_axis_targets.get(key, {}).get("value") in (None, "")
+        ]
+
+        if missing_keys:
+            preview = "\n".join(missing_keys[:12])
+            extra = "" if len(missing_keys) <= 12 else f"\n... and {len(missing_keys) - 12} more"
+            raise ValueError(
+                "Some recipe target values are missing:\n\n"
+                f"{preview}{extra}\n\n"
+                "Fill/capture all target values before saving recipe."
+            )
+
+        self._sync_legacy_axis_targets_from_recipe_targets()
+
+        camera_targets = self.recipe_doc.get("camera_axis_targets", {}) or {}
+        laser_targets = self.recipe_doc.get("laser_axis_targets", {}) or {}
 
         sku_meta = dict(self.sku_meta)
         sku_meta.pop("machine_serial", None)
@@ -2100,6 +2265,7 @@ class NewSKUPage(QWidget):
             sku_meta=sku_meta,
             camera_axis_targets=camera_targets,
             laser_axis_targets=laser_targets,
+            recipe_axis_targets=recipe_axis_targets,
             camera_config_links=self._collect_camera_config_links(),
             laser_config_links=self._collect_laser_config_links(),
             vit_model_path=self.recipe_doc.get("vit_model_path", ""),
@@ -2111,6 +2277,22 @@ class NewSKUPage(QWidget):
     def _preview_recipe(self):
         try:
             recipe_doc = self._build_final_recipe_doc()
+
+            recipe_axis_targets = recipe_doc.get("recipe_axis_targets", {}) or {}
+
+            machine_count = sum(
+                1 for v in recipe_axis_targets.values()
+                if str(v.get("group", "")).upper() == "MACHINE"
+            )
+            camera_count = sum(
+                1 for v in recipe_axis_targets.values()
+                if str(v.get("group", "")).upper() == "CAMERA"
+            )
+            laser_count = sum(
+                1 for v in recipe_axis_targets.values()
+                if str(v.get("group", "")).upper() == "LASER"
+            )
+
             text = (
                 f"SKU: {recipe_doc.get('sku_name')}\n"
                 f"Tyre Name: {recipe_doc.get('tyre_name')}\n"
@@ -2121,14 +2303,23 @@ class NewSKUPage(QWidget):
                 f"Operator/Author: {recipe_doc.get('author')}\n"
                 f"Inspection Zones: {recipe_doc.get('inspection_zones')}\n"
                 f"Image Count / Zone: {recipe_doc.get('image_count_per_zone')}\n\n"
-                f"Camera Axis Targets: {len(recipe_doc.get('camera_axis_targets', {}))}\n"
-                f"Laser Axis Targets: {len(recipe_doc.get('laser_axis_targets', {}))}\n\n"
+
+                f"Production Recipe Targets: {len(recipe_axis_targets)}\n"
+                f"Machine Targets: {machine_count}\n"
+                f"Camera Targets: {camera_count}\n"
+                f"Laser Targets: {laser_count}\n\n"
+
+                f"Legacy Camera Axis Targets: {len(recipe_doc.get('camera_axis_targets', {}))}\n"
+                f"Legacy Laser Axis Targets: {len(recipe_doc.get('laser_axis_targets', {}))}\n\n"
+
                 f"VIT Model Path:\n{recipe_doc.get('vit_model_path')}\n\n"
                 f"Validation F1 Macro: {recipe_doc.get('validation_score')}\n"
                 f"Status: {recipe_doc.get('status')}"
             )
+
             if self.recipe_summary_lbl is not None:
                 self.recipe_summary_lbl.setText(text)
+
         except Exception as e:
             QMessageBox.warning(self, "Recipe Preview", str(e))
 

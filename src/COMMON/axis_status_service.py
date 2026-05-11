@@ -362,48 +362,26 @@ class AxisStatusService:
         Axis Status SKU rule:
 
         DEPLOYMENT=True:
-            - PLC gives current active SKU.
-            - Dropdown still allows selecting any SKU from PLC SKU list.
-            - Selected dropdown SKU is used for recipe comparison.
-            - PLC SKU is shown separately for reference.
+            - Always read active SKU / recipe from PLC.
+            - No GUI dropdown override.
+            - Axis Status page shows only current live PLC recipe.
 
         DEPLOYMENT=False:
-            - Dropdown SKUs come from .env SKU_ID_* mappings.
+            - Use first .env SKU_ID_* mapping for demo/testing.
         """
-
-        plc_info = None
 
         if str(self.deployment) == "True":
             plc_info = self._read_sku_from_plc(client)
             plc_sku = plc_info.get("sku_name", "UNKNOWN")
 
-            if selected_sku and selected_sku != "UNKNOWN":
-                return {
-                    "sku_name": selected_sku,
-                    "source": "GUI_DROPDOWN",
-                    "raw_value": selected_sku,
-                    "message": f"Using dropdown SKU {selected_sku} for axis recipe comparison. PLC active SKU is {plc_sku}.",
-                    "plc_sku_name": plc_sku,
-                    "plc_raw_value": plc_info.get("raw_value"),
-                }
-
             return {
                 **plc_info,
                 "plc_sku_name": plc_sku,
                 "plc_raw_value": plc_info.get("raw_value"),
+                "message": plc_info.get("message", "Read active SKU from PLC"),
             }
 
-        # DEPLOYMENT=False
-        if selected_sku and selected_sku != "UNKNOWN":
-            return {
-                "sku_name": selected_sku,
-                "source": "GUI_DROPDOWN",
-                "raw_value": selected_sku,
-                "message": f"Using dropdown SKU {selected_sku} from .env.",
-                "plc_sku_name": "UNKNOWN",
-                "plc_raw_value": None,
-            }
-
+        # Demo mode only
         skus = self.get_available_skus()
 
         if skus:
@@ -411,7 +389,7 @@ class AxisStatusService:
                 "sku_name": skus[0],
                 "source": "ENV_DEFAULT",
                 "raw_value": skus[0],
-                "message": f"Defaulted to first .env SKU {skus[0]}.",
+                "message": f"Demo mode: using first .env SKU {skus[0]}.",
                 "plc_sku_name": "UNKNOWN",
                 "plc_raw_value": None,
             }
@@ -590,7 +568,6 @@ class AxisStatusService:
             "enabled": enabled,
             "homed": homed,
             "fault": fault,
-            "alarm_code": alarm,
 
             "status": status,
             "message": read_message,
@@ -600,7 +577,6 @@ class AxisStatusService:
                 "enabled": f'DB{cfg["enabled_db"]}.DBX{cfg["enabled_byte"]}.{cfg["enabled_bit"]}' if cfg.get("enabled_configured") else "NOT CONFIGURED",
                 "homed": f'DB{cfg["homed_db"]}.DBX{cfg["homed_byte"]}.{cfg["homed_bit"]}' if cfg.get("homed_configured") else "NOT CONFIGURED",
                 "fault": f'DB{cfg["fault_db"]}.DBX{cfg["fault_byte"]}.{cfg["fault_bit"]}' if cfg.get("fault_configured") else "NOT CONFIGURED",
-                "alarm": f'DB{cfg["alarm_db"]}.DBB{cfg["alarm_byte"]} ({cfg["alarm_type"]})' if cfg.get("alarm_configured") else "NOT CONFIGURED",
             },
         }
 
@@ -645,18 +621,24 @@ class AxisStatusService:
     # ------------------------------------------------------------
     def get_axis_status(self, selected_sku: Optional[str] = None) -> Dict[str, Any]:
         client = self._get_plc_client()
+
+        # selected_sku is ignored in production.
+        # Axis Status page must always use PLC active SKU.
         sku_info = self._resolve_active_sku(selected_sku, client)
 
         active_sku = sku_info.get("sku_name", "UNKNOWN")
         recipe = self._get_latest_recipe(active_sku)
 
         axes = []
+
         for i in range(1, 13):
             cfg = self._axis_cfg(i)
+
             recipe_position = self._get_recipe_axis_position(
                 recipe,
                 cfg["axis_key"],
             )
+
             axes.append(
                 self._read_axis(
                     client,
@@ -665,12 +647,18 @@ class AxisStatusService:
                 )
             )
 
-        overall_ok = bool(axes) and all(axis["status"] == "OK" for axis in axes)
+        recipe_found = recipe is not None
 
-        if recipe:
-            recipe_status = "LOADED FROM SKU RECIPE"
+        if active_sku == "UNKNOWN":
+            recipe_status = "PLC ACTIVE SKU UNKNOWN"
+        elif recipe_found:
+            recipe_status = "FOUND IN MONGODB"
         else:
-            recipe_status = "LIVE PLC VALUES ONLY"
+            recipe_status = "NOT FOUND IN MONGODB"
+
+        overall_ok = bool(recipe_found) and bool(axes) and all(
+            axis["status"] == "OK" for axis in axes
+        )
 
         return {
             "deployment": self.deployment,
@@ -679,6 +667,7 @@ class AxisStatusService:
             "sku_source": sku_info.get("source", "-"),
             "sku_message": sku_info.get("message", "-"),
             "recipe_status": recipe_status,
+            "recipe_found": recipe_found,
             "overall_ok": overall_ok,
             "axes": axes,
         }

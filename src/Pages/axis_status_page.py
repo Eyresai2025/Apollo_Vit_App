@@ -3,10 +3,9 @@
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QPushButton,
-    QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QListView
+    QTableWidget, QTableWidgetItem, QHeaderView,
+    QMessageBox
 )
-
 from src.COMMON.axis_status_service import AxisStatusService
 
 
@@ -37,7 +36,6 @@ class AxisStatusPage(QWidget):
         self.refresh_timer.timeout.connect(self.refresh_axis_status)
 
         self._build_ui()
-        self._load_skus()
 
     # ------------------------------------------------------------
     # UI
@@ -88,67 +86,21 @@ class AxisStatusPage(QWidget):
         info.setContentsMargins(14, 10, 14, 10)
         info.setSpacing(12)
 
-        sku_title = QLabel("Selected SKU:")
+        sku_title = QLabel("Active PLC SKU:")
         sku_title.setStyleSheet("font: 800 12px 'Segoe UI'; color:#222; border:none;")
         info.addWidget(sku_title)
 
-        self.sku_combo = QComboBox()
-        self.sku_combo.setMinimumWidth(190)
-        self.sku_combo.setFixedHeight(30)
-        self.sku_combo.setMaxVisibleItems(8)
-
-        # Local dropdown styling is needed because the main app stylesheet affects the popup.
-        self.sku_combo.setStyleSheet("""
-            QComboBox {
-                background: white;
-                color: #111;
-                border: 1px solid #bfc4ce;
-                border-radius: 4px;
-                padding-left: 8px;
-                font: 700 12px 'Segoe UI';
-            }
-            QComboBox:hover {
-                border: 1px solid #571c86;
-            }
-            QComboBox::drop-down {
-                width: 24px;
-                border-left: 1px solid #d0d0d0;
-            }
-            QComboBox QAbstractItemView {
-                background: white;
-                color: #111;
-                selection-background-color: #eee6f7;
-                selection-color: #111;
-                border: 1px solid #bfc4ce;
-                outline: 0px;
-                font: 700 12px 'Segoe UI';
+        self.active_sku_value_lbl = QLabel("UNKNOWN")
+        self.active_sku_value_lbl.setStyleSheet("""
+            QLabel {
+                background:#f1f3f5;
+                color:#111;
+                border-radius:8px;
+                padding:6px 12px;
+                font: 900 12px 'Segoe UI';
             }
         """)
-
-        popup_view = QListView(self.sku_combo)
-        popup_view.setStyleSheet("""
-            QListView {
-                background: white;
-                color: #111;
-                border: 1px solid #bfc4ce;
-                outline: 0px;
-                padding: 2px;
-            }
-            QListView::item {
-                min-height: 24px;
-                padding: 4px 8px;
-                color: #111;
-                background: white;
-            }
-            QListView::item:selected {
-                background: #eee6f7;
-                color: #111;
-            }
-        """)
-        self.sku_combo.setView(popup_view)
-
-        self.sku_combo.currentIndexChanged.connect(self.refresh_axis_status)
-        info.addWidget(self.sku_combo)
+        info.addWidget(self.active_sku_value_lbl)
 
         self.active_sku_lbl = QLabel("Recipe SKU: UNKNOWN")
         self.active_sku_lbl.setStyleSheet("font: 800 12px 'Segoe UI'; color:#333; border:none;")
@@ -188,7 +140,7 @@ class AxisStatusPage(QWidget):
         table_layout.setContentsMargins(10, 10, 10, 10)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(9)
+        self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
             "Axis",
             "Current Pos",
@@ -197,7 +149,6 @@ class AxisStatusPage(QWidget):
             "Enabled",
             "Homed",
             "Fault",
-            "Alarm",
             "Status",
         ])
         self.table.setRowCount(12)
@@ -304,15 +255,14 @@ class AxisStatusPage(QWidget):
             total_width = total_width - 6
 
             ratios = [
-                0.18,  # Axis
-                0.12,  # Current Pos
-                0.12,  # Recipe Pos
+                0.22,  # Axis
+                0.13,  # Current Pos
+                0.13,  # Recipe Pos
                 0.10,  # Tolerance
-                0.09,  # Enabled
-                0.09,  # Homed
-                0.08,  # Fault
-                0.08,  # Alarm
-                0.14,  # Status
+                0.10,  # Enabled
+                0.10,  # Homed
+                0.09,  # Fault
+                0.13,  # Status
             ]
 
             used = 0
@@ -328,62 +278,7 @@ class AxisStatusPage(QWidget):
         except Exception:
             pass
 
-    # ------------------------------------------------------------
-    # SKU
-    # ------------------------------------------------------------
-    def _load_skus(self):
-        """
-        DEPLOYMENT=True:
-            Load all available SKUs from PLC SKU list DB.
-            Select current active PLC SKU by default.
-            Keep dropdown enabled.
 
-        DEPLOYMENT=False:
-            Load all SKUs from .env SKU_ID_* mappings.
-        """
-        self.sku_combo.blockSignals(True)
-        self.sku_combo.clear()
-
-        skus = self.service.get_available_skus()
-
-        if not skus:
-            self.sku_combo.addItem("UNKNOWN")
-        else:
-            self.sku_combo.addItems(skus)
-
-        self.sku_combo.setEnabled(True)
-
-        if str(self.service.deployment) == "True":
-            client = self.service._get_plc_client()
-            plc_info = self.service._read_sku_from_plc(client)
-            plc_sku = plc_info.get("sku_name", "UNKNOWN")
-
-            if plc_sku and plc_sku != "UNKNOWN":
-                idx = self.sku_combo.findText(plc_sku)
-                if idx >= 0:
-                    self.sku_combo.setCurrentIndex(idx)
-
-                self.status_msg_lbl.setText(
-                    f"Status: PLC active SKU is {plc_sku}. Dropdown loaded from PLC SKU list or .env SKU_ID mappings."
-                )
-            else:
-                self.status_msg_lbl.setText(
-                    f"Status: PLC SKU unknown. Dropdown loaded from PLC SKU list or .env SKU_ID mappings."
-                )
-
-            self.sku_combo.setToolTip(
-                "Production mode: dropdown is loaded from PLC SKU list. Selecting SKU changes recipe comparison only; it does not write to PLC."
-            )
-
-        else:
-            self.status_msg_lbl.setText(
-                "Status: Demo mode. Dropdown loaded from .env SKU_ID_* mappings."
-            )
-            self.sku_combo.setToolTip(
-                "Demo mode: dropdown loaded from .env SKU_ID_* mappings."
-            )
-
-        self.sku_combo.blockSignals(False)
 
     # ------------------------------------------------------------
     # REFRESH
@@ -398,18 +293,10 @@ class AxisStatusPage(QWidget):
         self.refresh_timer.stop()
         self.refresh_state_lbl.setText("Auto Refresh: OFF")
 
-    def selected_sku(self):
-        text = self.sku_combo.currentText().strip()
-        if text and text != "UNKNOWN":
-            return text
-        return None
 
     def refresh_axis_status(self):
         try:
-            result = self.service.get_axis_status(
-                selected_sku=self.selected_sku()
-            )
-
+            result = self.service.get_axis_status()
             self._apply_result(result)
 
         except Exception as e:
@@ -451,18 +338,22 @@ class AxisStatusPage(QWidget):
         overall_ok = bool(result.get("overall_ok", False))
         axes = result.get("axes", [])
 
-        plc_sku = result.get("sku_info", {}).get("plc_sku_name", "UNKNOWN")
+        sku_info = result.get("sku_info", {})
+        plc_raw_value = sku_info.get("plc_raw_value", None)
 
-        if plc_sku and plc_sku != "UNKNOWN":
+        self.active_sku_value_lbl.setText(str(active_sku))
+
+        if plc_raw_value not in (None, "", "UNKNOWN"):
             self.active_sku_lbl.setText(
-                f"Recipe SKU: {active_sku} | PLC SKU: {plc_sku}"
+                f"PLC Active SKU: {active_sku} | Raw PLC Value: {plc_raw_value}"
             )
         else:
             self.active_sku_lbl.setText(
-                f"Recipe SKU: {active_sku}"
+                f"PLC Active SKU: {active_sku}"
             )
 
-        self.recipe_status_lbl.setText(f"Recipe: {recipe_status}")
+        self.recipe_status_lbl.setText(f"MongoDB Recipe: {recipe_status}")
+        self.status_msg_lbl.setText(f"Status: {sku_message}")
 
         if overall_ok:
             self.overall_status_lbl.setText("Overall: OK")
@@ -499,8 +390,7 @@ class AxisStatusPage(QWidget):
             self._set_item(row, 4, self._fmt(axis.get("enabled")), status)
             self._set_item(row, 5, self._fmt(axis.get("homed")), status)
             self._set_item(row, 6, self._fmt(axis.get("fault")), status)
-            self._set_item(row, 7, self._fmt(axis.get("alarm_code")), status)
-            self._set_item(row, 8, status, status)
+            self._set_item(row, 7, status, status)
 
         self.status_msg_lbl.setText(f"Status: {sku_message}")
         self._resize_table_columns()
@@ -517,7 +407,6 @@ class AxisStatusPage(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
 
-        self._load_skus()
         self.start_refresh()
         QTimer.singleShot(100, self._resize_table_columns)
 
