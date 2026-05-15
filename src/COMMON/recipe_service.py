@@ -5,10 +5,10 @@ import re
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, Optional, List
-
+import struct
 from src.COMMON.common import load_env
 from src.COMMON.db import get_collection
-
+from src.COMMON.recipe_tag_map import RECIPE_TARGETS
 
 try:
     import snap7  # type: ignore
@@ -199,68 +199,58 @@ class RecipeService:
     # ------------------------------------------------------------
     def get_recipe_target_configs(self) -> List[Dict[str, Any]]:
         """
-        Reads production recipe target rows from .env.
+        Production recipe target rows from shared recipe_tag_map.py.
 
-        Example:
-            RECIPE_TARGET_COUNT=17
+        This is used by:
+            - New SKU Axis Teaching
+            - Save Recipe
+            - DB53 PLC write
+            - Recipe Management later
 
-            RECIPE_TARGET_13_KEY=sidewall1_laser_fwd_rev
-            RECIPE_TARGET_13_GROUP=LASER
-            RECIPE_TARGET_13_AXIS_ID=5
-            RECIPE_TARGET_13_NAME=Sidewall 1 Laser FWD/REV Target
-            RECIPE_TARGET_13_WRITE_DB=130
-            RECIPE_TARGET_13_WRITE_BYTE=100
-            RECIPE_TARGET_13_TYPE=REAL
-
-        Returns one row per recipe target.
-        One physical servo axis can appear multiple times.
+        We do NOT use old .env RECIPE_TARGET_COUNT=17 here anymore.
         """
-        count = _env_int(self.env, "RECIPE_TARGET_COUNT", 0)
-        targets: List[Dict[str, Any]] = []
 
+        targets: List[Dict[str, Any]] = []
         axis_configs = self.get_all_axis_configs()
 
-        for idx in range(1, count + 1):
-            prefix = f"RECIPE_TARGET_{idx}_"
-
-            key = _env_str(self.env, prefix + "KEY", "")
-            if not key:
+        for idx, item in enumerate(RECIPE_TARGETS, start=1):
+            axis_id = int(item.get("axis_id", 0) or 0)
+            if axis_id <= 0:
                 continue
 
-            axis_id = _env_int(self.env, prefix + "AXIS_ID", 0)
             axis_cfg = axis_configs.get(axis_id, {})
 
-            group = _env_str(self.env, prefix + "GROUP", "MACHINE").upper()
-            name = _env_str(self.env, prefix + "NAME", key)
+            target_name = (
+                f"{item.get('sd', '')} "
+                f"{item.get('description', '')} "
+                f"{item.get('position', '')}"
+            ).strip()
 
-            write_db = _env_int(
-                self.env,
-                prefix + "WRITE_DB",
-                _env_int(self.env, "RECIPE_PLC_DB", 130),
-            )
+            targets.append({
+                "target_index": idx,
+                "target_key": item.get("key", ""),
+                "legacy_key": item.get("legacy_key"),
 
-            write_byte = _env_int(self.env, prefix + "WRITE_BYTE", -1)
-            data_type = _env_str(
-                self.env,
-                prefix + "TYPE",
-                _env_str(self.env, "RECIPE_AXIS_VALUE_TYPE", "REAL"),
-            ).upper()
+                "group": str(item.get("group", "MACHINE")).upper(),
+                "position": item.get("position", ""),
 
-            targets.append(
-                {
-                    "target_index": idx,
-                    "target_key": key,
-                    "group": group,
-                    "axis_id": axis_id,
-                    "axis_key": f"axis_{axis_id:02d}" if axis_id > 0 else "",
-                    "axis_name": axis_cfg.get("name", f"Axis {axis_id}"),
-                    "axis_ip": axis_cfg.get("ip", ""),
-                    "target_name": name,
-                    "write_db": write_db,
-                    "write_byte": write_byte,
-                    "type": data_type,
-                }
-            )
+                "axis_id": axis_id,
+                "axis_key": f"axis_{axis_id:02d}",
+                "axis_name": axis_cfg.get("name", f"Axis {axis_id}"),
+                "axis_ip": axis_cfg.get("ip", ""),
+
+                "target_name": target_name,
+
+                # DB53 write address
+                "write_db": int(item.get("db53_db", 53)),
+                "write_byte": int(item.get("db53_byte", -1)),
+                "type": str(item.get("db53_type", "REAL")).upper(),
+
+                # Keep DB75 info for display/reference/debug
+                "db75_db": int(item.get("db75_db", 75)),
+                "db75_byte": int(item.get("db75_byte", -1)),
+                "db75_type": str(item.get("db75_type", "REAL")).upper(),
+            })
 
         return targets
 
@@ -359,51 +349,46 @@ class RecipeService:
             plc_client=plc_client,
         )
 
-    def _read_plc_value(
-        self,
-        db_no: int,
-        byte: int,
-        data_type: str,
-        plc_client=None,
-    ):
-        if snap7 is None:
-            raise RuntimeError("snap7 not installed")
+    def _read_plc_value(self, db_no: int, byte: int, data_type: str, plc_client=None):
+        """
+        Generic PLC DB read.
+
+        Supports:
+            REAL  -> 4 bytes
+            INT   -> 2 bytes signed
+            DINT  -> 4 bytes signed
+            WORD  -> 2 bytes unsigned
+            BYTE  -> 1 byte unsigned
+        """
+
+        data_type = str(data_type or "REAL").strip().upper()
 
         client = plc_client or self.plc_client
 
         if client is None:
-            raise RuntimeError(
-                "PLC client not available. Run Test Mode first or pass plc_client to RecipeService."
-            )
+            raise RuntimeError("PLC client is not available.")
 
-        try:
-            if hasattr(client, "get_connected") and not client.get_connected():
-                raise RuntimeError("Shared PLC client is disconnected")
+        if data_type == "REAL":
+            raw = client.db_read(int(db_no), int(byte), 4)
+            return round(float(struct.unpack(">f", bytes(raw))[0]), 3)
 
-            data_type = str(data_type).upper()
+        if data_type == "INT":
+            raw = client.db_read(int(db_no), int(byte), 2)
+            return int(struct.unpack(">h", bytes(raw))[0])
 
-            if data_type == "REAL":
-                data = client.db_read(db_no, byte, 4)
-                return float(get_real(data, 0))
+        if data_type == "DINT":
+            raw = client.db_read(int(db_no), int(byte), 4)
+            return int(struct.unpack(">i", bytes(raw))[0])
 
-            if data_type == "DINT":
-                data = client.db_read(db_no, byte, 4)
-                return int(get_dint(data, 0))
+        if data_type == "WORD":
+            raw = client.db_read(int(db_no), int(byte), 2)
+            return int(struct.unpack(">H", bytes(raw))[0])
 
-            if data_type == "INT":
-                data = client.db_read(db_no, byte, 2)
-                return int(get_int(data, 0))
+        if data_type == "BYTE":
+            raw = client.db_read(int(db_no), int(byte), 1)
+            return int(raw[0])
 
-            if data_type == "WORD":
-                data = client.db_read(db_no, byte, 2)
-                return int(get_word(data, 0))
-
-            raise RuntimeError(f"Unsupported PLC data type: {data_type}")
-
-        except Exception as e:
-            raise RuntimeError(
-                f"PLC read failed DB{db_no}, byte {byte}, type {data_type}: {e}"
-            )
+        raise RuntimeError(f"Unsupported PLC read type: {data_type}")
 
     # ------------------------------------------------------------
     # RECIPE DOC
@@ -506,6 +491,10 @@ class RecipeService:
 
         inserted = self.recipe_col.insert_one(recipe_doc)
 
+        # Important: keep inserted MongoDB _id inside recipe_doc
+        # so Active Recipe / last_loaded_recipe can point to this exact recipe.
+        recipe_doc["_id"] = inserted.inserted_id
+
         backup_path = self._save_local_backup(recipe_doc)
 
         plc_result = {
@@ -548,7 +537,319 @@ class RecipeService:
             json.dump(clean_doc, f, indent=2, ensure_ascii=False)
 
         return backup_path
+    
+    # ------------------------------------------------------------
+    # PLC RECIPE READ / VERIFY
+    # ------------------------------------------------------------
+    def verify_recipe_write(
+        self,
+        recipe_doc: Dict[str, Any],
+        plc_client=None,
+        tolerance: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Read DB53 values back after writing and compare with MongoDB recipe values.
 
+        This verifies:
+            recipe_axis_targets[target_key]["value"]
+                ==
+            PLC DB value at recipe_axis_targets[target_key]["write_db/write_byte"]
+
+        For production:
+            DB53 = recipe write/read DB.
+            DB74 = live machine values.
+            DB75 = active/current recipe read later.
+        """
+
+        if not self.deployment:
+            return {
+                "enabled": True,
+                "ok": False,
+                "verified": False,
+                "message": "DEPLOYMENT=False, PLC read-back verification skipped.",
+                "verified_count": 0,
+                "mismatch_count": 0,
+                "mismatches": [],
+                "items": [],
+            }
+
+        if snap7 is None:
+            return {
+                "enabled": True,
+                "ok": False,
+                "verified": False,
+                "message": "snap7 not installed.",
+                "verified_count": 0,
+                "mismatch_count": 0,
+                "mismatches": [],
+                "items": [],
+            }
+
+        recipe_axis_targets = recipe_doc.get("recipe_axis_targets", {}) or {}
+
+        if not recipe_axis_targets:
+            return {
+                "enabled": True,
+                "ok": False,
+                "verified": False,
+                "message": "No recipe_axis_targets found for verification.",
+                "verified_count": 0,
+                "mismatch_count": 0,
+                "mismatches": [],
+                "items": [],
+            }
+
+        if tolerance is None:
+            tolerance = _env_float(self.env, "RECIPE_VERIFY_TOLERANCE", 0.01)
+
+        target_cfg_map = self.get_recipe_target_config_map()
+
+        own_client = False
+        client = plc_client or self.plc_client
+
+        if client is None:
+            client = snap7.client.Client()
+            own_client = True
+            client.connect(
+                self.env.get("PLC_IP", "192.168.10.1"),
+                int(self.env.get("PLC_RACK", "0")),
+                int(self.env.get("PLC_SLOT", "1")),
+            )
+
+        items = []
+        mismatches = []
+
+        try:
+            if hasattr(client, "get_connected") and not client.get_connected():
+                raise RuntimeError("PLC client is disconnected")
+
+            for target_key, target in recipe_axis_targets.items():
+                cfg = target_cfg_map.get(target_key, {})
+
+                expected = target.get("value", None)
+
+                if expected is None or expected == "":
+                    continue
+
+                db_no = int(
+                    target.get(
+                        "write_db",
+                        cfg.get("write_db", self.env.get("RECIPE_PLC_DB", 53)),
+                    )
+                )
+
+                byte = int(
+                    target.get(
+                        "write_byte",
+                        cfg.get("write_byte", -1),
+                    )
+                )
+
+                data_type = str(
+                    target.get(
+                        "type",
+                        cfg.get("type", self.env.get("RECIPE_AXIS_VALUE_TYPE", "REAL")),
+                    )
+                ).upper()
+
+                if db_no <= 0 or byte < 0:
+                    mismatches.append({
+                        "target_key": target_key,
+                        "expected": expected,
+                        "actual": None,
+                        "db": db_no,
+                        "byte": byte,
+                        "reason": "invalid PLC address",
+                    })
+                    continue
+
+                actual = self._read_plc_value(
+                    db_no=db_no,
+                    byte=byte,
+                    data_type=data_type,
+                    plc_client=client,
+                )
+
+                expected_f = float(expected)
+                actual_f = float(actual)
+                delta = actual_f - expected_f
+                ok = abs(delta) <= float(tolerance)
+
+                item = {
+                    "target_key": target_key,
+                    "target_name": target.get("target_name", cfg.get("target_name", "")),
+                    "expected": expected_f,
+                    "actual": actual_f,
+                    "delta": delta,
+                    "ok": ok,
+                    "db": db_no,
+                    "byte": byte,
+                    "type": data_type,
+                }
+
+                items.append(item)
+
+                if not ok:
+                    mismatches.append(item)
+
+            verified_count = len(items)
+            mismatch_count = len(mismatches)
+            ok_all = verified_count > 0 and mismatch_count == 0
+
+            return {
+                "enabled": True,
+                "ok": ok_all,
+                "verified": True,
+                "message": (
+                    f"PLC read-back verification complete. "
+                    f"Verified={verified_count}, mismatches={mismatch_count}, "
+                    f"tolerance={tolerance}."
+                ),
+                "verified_count": verified_count,
+                "mismatch_count": mismatch_count,
+                "tolerance": tolerance,
+                "items": items,
+                "mismatches": mismatches,
+            }
+
+        except Exception as e:
+            return {
+                "enabled": True,
+                "ok": False,
+                "verified": False,
+                "message": str(e),
+                "verified_count": len(items),
+                "mismatch_count": len(mismatches),
+                "mismatches": mismatches,
+                "items": items,
+            }
+
+        finally:
+            if own_client and client is not None:
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
+
+    def _mark_recipe_as_last_loaded(self, recipe_doc: Dict[str, Any], plc_result: Dict[str, Any]) -> bool:
+        """
+        Stores the last recipe that this application loaded to PLC.
+
+        This is NOT PLC active SKU.
+        It is application-side history/state.
+
+        Axis Status can later use this until PLC gives real active SKU tag.
+        """
+
+        try:
+            active_col = get_collection("Active Recipe")
+
+            active_col.update_one(
+                {"type": "last_loaded_recipe"},
+                {
+                    "$set": {
+                        "type": "last_loaded_recipe",
+                        "sku_name": recipe_doc.get("sku_name", ""),
+                        "recipe_id": str(recipe_doc.get("_id", "")),
+                        "recipe_version": recipe_doc.get("version"),
+                        "recipe_number": recipe_doc.get("recipe_number"),
+                        "plc_recipe_number": recipe_doc.get("plc_recipe_number"),
+                        "status": recipe_doc.get("status", ""),
+                        "vit_model_path": recipe_doc.get("vit_model_path", ""),
+                        "plc_written": plc_result.get("written", False),
+                        "plc_verified": plc_result.get("verified", False),
+                        "recipe_number_result": plc_result.get("recipe_number_result", {}),
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "source": "APPLICATION_LOADED_TO_PLC",
+                    }
+                },
+                upsert=True,
+            )
+
+            return True
+
+        except Exception:
+            return False
+        
+    def _write_recipe_number_to_plc(self, client, recipe_doc: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Writes PLC recipe number entry tag.
+
+        PLC confirmed:
+            RECIPE NUMBER = INT at DB75.DBW288
+
+        Meaning:
+            This is a recipe number ENTRY/WRITE tag.
+            It is NOT active SKU / active recipe read tag.
+        """
+
+        recipe_number = (
+            recipe_doc.get("recipe_number")
+            or recipe_doc.get("plc_recipe_number")
+            or recipe_doc.get("sku_meta", {}).get("recipe_number")
+        )
+
+        try:
+            recipe_number = int(recipe_number)
+        except Exception:
+            return {
+                "enabled": True,
+                "written": False,
+                "verified": False,
+                "recipe_number": None,
+                "actual": None,
+                "message": "Recipe number missing or invalid; DB75.DBW288 not written.",
+            }
+
+        db_no = int(self.env.get("RECIPE_NUMBER_WRITE_DB", "75"))
+        byte = int(self.env.get("RECIPE_NUMBER_WRITE_BYTE", "288"))
+        dtype = str(self.env.get("RECIPE_NUMBER_WRITE_TYPE", "INT")).upper()
+
+        try:
+            self._write_plc_value(
+                client=client,
+                db_no=db_no,
+                byte=byte,
+                data_type=dtype,
+                value=recipe_number,
+            )
+
+            actual = self._read_plc_value(
+                db_no=db_no,
+                byte=byte,
+                data_type=dtype,
+                plc_client=client,
+            )
+
+            verified = actual is not None and int(actual) == int(recipe_number)
+
+            return {
+                "enabled": True,
+                "written": True,
+                "verified": verified,
+                "recipe_number": recipe_number,
+                "actual": actual,
+                "db": db_no,
+                "byte": byte,
+                "type": dtype,
+                "message": (
+                    f"Recipe number {recipe_number} written to DB{db_no}.DBW{byte}. "
+                    f"Readback={actual}, verified={verified}."
+                ),
+            }
+
+        except Exception as e:
+            return {
+                "enabled": True,
+                "written": False,
+                "verified": False,
+                "recipe_number": recipe_number,
+                "actual": None,
+                "db": db_no,
+                "byte": byte,
+                "type": dtype,
+                "message": f"Recipe number PLC write failed: {e}",
+            }
     # ------------------------------------------------------------
     # PLC RECIPE WRITE
     # ------------------------------------------------------------
@@ -558,21 +859,38 @@ class RecipeService:
         plc_client=None,
     ) -> Dict[str, Any]:
         """
-        Writes recipe targets to PLC.
+        Writes recipe to PLC.
 
-        Priority:
-        1. Production new field:
-            recipe_axis_targets
-            Uses exact write_db/write_byte per target.
+        Writes:
+            1. Recipe target values to DB53
+            2. Recipe number to DB75.DBW288
 
-        2. Legacy fallback:
-            camera_axis_targets / laser_axis_targets
-            Uses RECIPE_CAMERA_AXIS_START_BYTE / RECIPE_LASER_AXIS_START_BYTE.
+        Verifies:
+            1. DB53 target values by read-back
+            2. DB75.DBW288 recipe number by read-back
+
+        Important:
+            DB74 = live actual machine values, read only.
+            DB53 = recipe target write/read/verify DB.
+            DB75.DBD0-DBD284 = running servo recipe values, read only.
+            DB75.DBW288 = recipe number entry/write tag.
         """
+
+        write_enabled = _to_bool(self.env.get("RECIPE_WRITE_TO_PLC", "False"))
+
+        if not write_enabled:
+            return {
+                "enabled": False,
+                "written": False,
+                "verified": False,
+                "message": "PLC recipe write disabled. Set RECIPE_WRITE_TO_PLC=True only during PLC DB53/DB75 recipe test/production.",
+            }
+
         if not self.deployment:
             return {
                 "enabled": True,
                 "written": False,
+                "verified": False,
                 "message": "DEPLOYMENT=False, PLC write skipped.",
             }
 
@@ -580,6 +898,7 @@ class RecipeService:
             return {
                 "enabled": True,
                 "written": False,
+                "verified": False,
                 "message": "snap7 not installed.",
             }
 
@@ -602,20 +921,106 @@ class RecipeService:
             recipe_axis_targets = recipe_doc.get("recipe_axis_targets", {}) or {}
 
             if recipe_axis_targets:
-                return self._write_recipe_targets_to_plc(
+                write_result = self._write_recipe_targets_to_plc(
                     client=client,
                     recipe_axis_targets=recipe_axis_targets,
                 )
 
-            return self._write_legacy_axis_targets_to_plc(
+                verify_result = self.verify_recipe_write(
+                    recipe_doc=recipe_doc,
+                    plc_client=client,
+                )
+
+                recipe_number_result = self._write_recipe_number_to_plc(
+                    client=client,
+                    recipe_doc=recipe_doc,
+                )
+
+                db53_written_ok = bool(write_result.get("written", False))
+                db53_verify_ok = bool(verify_result.get("ok", False))
+
+                recipe_no_written_ok = bool(recipe_number_result.get("written", False))
+                recipe_no_verify_ok = bool(recipe_number_result.get("verified", False))
+
+                overall_written = db53_written_ok and recipe_no_written_ok
+                overall_verified = db53_verify_ok and recipe_no_verify_ok
+
+                final_result = {
+                    "enabled": True,
+                    "written": overall_written,
+                    "verified": overall_verified,
+                    "message": (
+                        f"{write_result.get('message', '')} "
+                        f"{verify_result.get('message', '')} "
+                        f"{recipe_number_result.get('message', '')}"
+                    ).strip(),
+
+                    "write_result": write_result,
+                    "verify_result": verify_result,
+                    "recipe_number_result": recipe_number_result,
+
+                    "written_items": write_result.get("written_items", []),
+                    "skipped_items": write_result.get("skipped_items", []),
+                    "mismatches": verify_result.get("mismatches", []),
+
+                    "db53_written": db53_written_ok,
+                    "db53_verified": db53_verify_ok,
+                    "recipe_number_written": recipe_no_written_ok,
+                    "recipe_number_verified": recipe_no_verify_ok,
+                }
+
+                if overall_written:
+                    self._mark_recipe_as_last_loaded(recipe_doc, final_result)
+
+                return final_result
+
+            # Legacy fallback. This writes old camera/laser groups.
+            # Recipe number will still be written if recipe number is present.
+            legacy_result = self._write_legacy_axis_targets_to_plc(
                 client=client,
                 recipe_doc=recipe_doc,
             )
+
+            recipe_number_result = self._write_recipe_number_to_plc(
+                client=client,
+                recipe_doc=recipe_doc,
+            )
+
+            legacy_written = bool(legacy_result.get("written", False))
+            recipe_no_written = bool(recipe_number_result.get("written", False))
+            recipe_no_verified = bool(recipe_number_result.get("verified", False))
+
+            final_result = {
+                "enabled": True,
+                "written": legacy_written and recipe_no_written,
+                "verified": recipe_no_verified,
+                "message": (
+                    f"{legacy_result.get('message', '')} "
+                    "Verification skipped for legacy recipe target format. "
+                    f"{recipe_number_result.get('message', '')}"
+                ).strip(),
+                "write_result": legacy_result,
+                "verify_result": {
+                    "enabled": True,
+                    "ok": False,
+                    "verified": False,
+                    "message": "Verification skipped for legacy recipe format.",
+                },
+                "recipe_number_result": recipe_number_result,
+                "recipe_number_written": recipe_no_written,
+                "recipe_number_verified": recipe_no_verified,
+            }
+
+            if final_result["written"]:
+                self._mark_recipe_as_last_loaded(recipe_doc, final_result)
+
+            return final_result
 
         except Exception as e:
             return {
                 "enabled": True,
                 "written": False,
+                "verified": False,
                 "message": str(e),
             }
 
@@ -652,7 +1057,7 @@ class RecipeService:
             db_no = int(
                 target.get(
                     "write_db",
-                    cfg.get("write_db", self.env.get("RECIPE_PLC_DB", 130)),
+                    cfg.get("write_db", self.env.get("RECIPE_PLC_DB", 53)),
                 )
             )
 
@@ -707,7 +1112,7 @@ class RecipeService:
             "written_items": written_items,
             "skipped_items": skipped_items,
         }
-
+    
     def _write_legacy_axis_targets_to_plc(
         self,
         client,
@@ -783,24 +1188,46 @@ class RecipeService:
                 value=float(value),
             )
 
-    def _write_plc_value(
-        self,
-        client,
-        db_no: int,
-        byte: int,
-        data_type: str,
-        value: float,
-    ):
-        data_type = str(data_type).upper()
+    def _write_plc_value(self, client, db_no: int, byte: int, data_type: str, value):
+        """
+        Generic PLC DB write.
 
-        if data_type != "REAL":
-            raise RuntimeError(
-                f"PLC recipe write currently supports REAL only. Got {data_type}."
-            )
+        Supports:
+            REAL  -> 4 bytes
+            INT   -> 2 bytes signed
+            DINT  -> 4 bytes signed
+            WORD  -> 2 bytes unsigned
+            BYTE  -> 1 byte unsigned
+        """
 
-        if set_real is None:
-            raise RuntimeError("snap7.util.set_real is not available")
+        data_type = str(data_type or "REAL").strip().upper()
 
-        data = bytearray(4)
-        set_real(data, 0, float(value))
-        client.db_write(int(db_no), int(byte), data)
+        if client is None:
+            raise RuntimeError("PLC client is not available.")
+
+        if data_type == "REAL":
+            data = bytearray(struct.pack(">f", float(value)))
+            client.db_write(int(db_no), int(byte), data)
+            return
+
+        if data_type == "INT":
+            data = bytearray(struct.pack(">h", int(value)))
+            client.db_write(int(db_no), int(byte), data)
+            return
+
+        if data_type == "DINT":
+            data = bytearray(struct.pack(">i", int(value)))
+            client.db_write(int(db_no), int(byte), data)
+            return
+
+        if data_type == "WORD":
+            data = bytearray(struct.pack(">H", int(value)))
+            client.db_write(int(db_no), int(byte), data)
+            return
+
+        if data_type == "BYTE":
+            data = bytearray([int(value) & 0xFF])
+            client.db_write(int(db_no), int(byte), data)
+            return
+
+        raise RuntimeError(f"Unsupported PLC write type: {data_type}")

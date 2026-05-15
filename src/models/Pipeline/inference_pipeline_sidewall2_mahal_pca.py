@@ -36,11 +36,12 @@ import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
 from sklearn.decomposition import PCA
-from src.models.Pipeline.patchify_utils import patchify_index_grouped
+from src.models.Pipeline.patchs import patchify_index_grouped
 from src.models.Pipeline.polarizer import polarizer_optimized
 from src.models.Pipeline.R_Detection_align_crop import (
     build_r_detector,
     align_and_crop_to_reference,
+    get_reference_r_points,
 )
 from src.models.Pipeline.yolo_patch_classifier import load_yolo_seg, segment_patch_paths
 from src.COMMON.common import sidewall_dimensions
@@ -141,10 +142,13 @@ BIG_STEP_H = 200
 BIG_STEP_W = 200
 COVER_EDGES = True
 
+CALIBRATION_DIR_NAME = "calibration_sidewall2"
+CROP_ANCHOR_REF_NAME = "crop_anchor_reference.json"
+
 # first N -> map/reference bank
 # next N -> threshold calibration
-MAP_IMAGE_COUNT = 5
-THRESH_IMAGE_COUNT = 4
+MAP_IMAGE_COUNT = 15
+THRESH_IMAGE_COUNT = 25
 
 # patchwise threshold settings
 LOCAL_PERCENTILE = 99.0
@@ -190,12 +194,7 @@ DEFECT_CALIB_PREFIXES = ("def",)   # def1, def2, def3 ...
 
 # Patches to ignore ONLY for def* calibration images
 DEFECT_IGNORE_RCS = {
-    (4, 8),
-    (25,8),
-    (26,8),
-    (27,8),
-    (45,9),
-    (46,9)
+    (43, 2)
 }
 
 # =========================================================
@@ -204,7 +203,7 @@ DEFECT_IGNORE_RCS = {
 REMOVE_TOP_OUTLIER_PER_RC = True
 OUTLIER_RATIO = 1.8  # remove largest if largest > 1.8 * second_largest
 
-LOCAL_PERCENTILE_AFTER_CLEAN = 95.0
+LOCAL_PERCENTILE_AFTER_CLEAN = 99.0
 
 # =========================================================
 # UTILITIES
@@ -506,6 +505,13 @@ def get_patch_embeddings(model, paths, device, tfm=None):
     if not imgs:
         return torch.empty(0, feat_dim), []
 
+    # TRT path
+    if hasattr(model, "extract"):
+        batch = torch.stack(imgs).cpu()
+        embeddings = model.extract(batch)
+        return embeddings, valid_paths
+
+    # Original PyTorch path
     batch = torch.stack(imgs).to(device, non_blocking=True)
 
     if device == "cuda":
@@ -1995,7 +2001,20 @@ def read_and_polarize(raw_path):
     return raw_bgr, pre_bgr
 
 
-def align_crop_from_preprocessed(pre_bgr, ref_pre_bgr, r_detector, save_template_path=None, reference_r=None):
+def align_crop_from_preprocessed(
+    pre_bgr,
+    ref_pre_bgr,
+    r_detector,
+    save_template_path=None,
+    reference_r=None,
+    crop_anchor_ref_path=None,
+    crop_anchor_debug_path=None,
+    debug_name="",
+):
+    """
+    Pipeline wrapper for R crop + crop-anchor alignment.
+    """
+
     if USE_ALIGNMENT:
         crop_bgr, aligned_bgr, crop_meta = align_and_crop_to_reference(
             image_bgr=pre_bgr,
@@ -2005,27 +2024,58 @@ def align_crop_from_preprocessed(pre_bgr, ref_pre_bgr, r_detector, save_template
             slice_w=SLICE_W,
             target_size=RESIZE_CROP_TO,
             reference_r=reference_r,
+            crop_anchor_ref_path=crop_anchor_ref_path,
+            crop_anchor_debug_path=crop_anchor_debug_path,
+            debug_name=debug_name,
         )
+
         if crop_bgr is None:
             raise RuntimeError(crop_meta)
-    else:
-        crop_bgr = cv2.resize(pre_bgr, RESIZE_CROP_TO, interpolation=cv2.INTER_LINEAR)
-        aligned_bgr = crop_bgr.copy()
 
-    if save_template_path is not None:
+    else:
+        crop_bgr = cv2.resize(
+            pre_bgr,
+            RESIZE_CROP_TO,
+            interpolation=cv2.INTER_LINEAR,
+        )
+        aligned_bgr = crop_bgr.copy()
+        crop_meta = {
+            "status": "ok",
+            "alignment_mode": "disabled",
+        }
+
+    if save_template_path is not None and aligned_bgr is not None:
         cv2.imwrite(save_template_path, aligned_bgr)
+
+        meta_path = os.path.splitext(save_template_path)[0] + "_align_meta.json"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(crop_meta, f, indent=2, default=str)
 
     return crop_bgr
 
-
-def build_calibration_pipeline(model,r_detector,device,gpu_sem=None,calib_good_dir=None,output_dir=None):
+def build_calibration_pipeline(
+    model,
+    r_detector,
+    device,
+    gpu_sem=None,
+    calib_good_dir=None,
+    output_dir=None,
+    ref_image_path=None,
+):
     calib_good_dir = calib_good_dir or CALIB_GOOD_DIR
     output_dir = output_dir or OUTPUT_DIR
 
-    calib_root = os.path.join(output_dir, "calibration")
+    calib_root = os.path.join(output_dir, CALIBRATION_DIR_NAME)
     template_dir = os.path.join(calib_root, "template_result")
     crop_dir = os.path.join(calib_root, "cropped")
     art_dir = os.path.join(calib_root, "artifacts")
+    crop_anchor_ref_path = os.path.join(art_dir, CROP_ANCHOR_REF_NAME)
+
+    if os.path.isfile(crop_anchor_ref_path):
+        os.remove(crop_anchor_ref_path)
+        print(f"[CROP_ANCHOR] Removed old reference: {crop_anchor_ref_path}")
+
+    print(f"[CROP_ANCHOR] First calibration image will create reference: {crop_anchor_ref_path}")
     summary_dir = os.path.join(calib_root, "summary")
 
     for d in [template_dir, crop_dir, art_dir, summary_dir]:
@@ -2118,12 +2168,20 @@ def build_calibration_pipeline(model,r_detector,device,gpu_sem=None,calib_good_d
 
         _, pre_bgr = read_and_polarize(raw_path)
 
+        crop_anchor_debug_path = os.path.join(
+            single_template_dir,
+            f"{name}_crop_anchor_debug.png",
+        )
+
         crop_bgr = align_crop_from_preprocessed(
             pre_bgr=pre_bgr,
             ref_pre_bgr=ref_pre_bgr,
             r_detector=r_detector,
             save_template_path=template_path,
-            reference_r = reference_r,
+            reference_r=reference_r,
+            crop_anchor_ref_path=crop_anchor_ref_path,
+            crop_anchor_debug_path=crop_anchor_debug_path,
+            debug_name=f"CALIB_{name}",
         )
 
         crop_gray = to_gray(crop_bgr)
@@ -2355,11 +2413,20 @@ def patchify_array_indexed(img_gray, patch_h, patch_w, step_h, step_w, cover_edg
 # =========================================================
 # LOAD ARTIFACTS
 # =========================================================
-def load_calibration_artifacts_from_dir(output_dir, ref_image_path_override=None):
-    if ref_image_path_override:
+def load_calibration_artifacts_from_dir(
+    output_dir=None,
+    ref_image_path_override=None,
+    calibration_artifact_dir_override=None,
+):
+    if calibration_artifact_dir_override:
+        art_dir = calibration_artifact_dir_override
+
+    elif ref_image_path_override:
         art_dir = os.path.dirname(ref_image_path_override)
+
     else:
-        calib_root = os.path.join(output_dir, "calibration")
+        output_dir = output_dir or OUTPUT_DIR
+        calib_root = os.path.join(output_dir, CALIBRATION_DIR_NAME)
         art_dir = os.path.join(calib_root, "artifacts")
 
     meta_path = os.path.join(art_dir, "embedding_bank_meta.pt")
@@ -2372,10 +2439,13 @@ def load_calibration_artifacts_from_dir(output_dir, ref_image_path_override=None
 
     if not os.path.isfile(ref_pre_path):
         raise RuntimeError(f"Missing alignment reference: {ref_pre_path}")
+
     if not os.path.isfile(thr_path):
         raise RuntimeError(f"Missing thresholds: {thr_path}")
+
     if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"] and not os.path.isfile(mahal_path):
         raise RuntimeError(f"Missing mahalanobis stats: {mahal_path}")
+
     if DISTANCE_METRIC == "mahalanobis_pca" and not os.path.isfile(pca_path):
         raise RuntimeError(f"Missing PCA artifact: {pca_path}")
 
@@ -2406,10 +2476,14 @@ def load_calibration_artifacts_from_dir(output_dir, ref_image_path_override=None
         sigma_by_rc,
         mahalanobis_stats,
         pca_artifact,
+        art_dir,
     )
 
-def load_calibration_artifacts():
-    return load_calibration_artifacts_from_dir(OUTPUT_DIR)
+def load_calibration_artifacts(calibration_artifact_dir_override=None):
+    return load_calibration_artifacts_from_dir(
+        OUTPUT_DIR,
+        calibration_artifact_dir_override=calibration_artifact_dir_override,
+    )
 
 def load_runtime(
     device=None,
@@ -2425,9 +2499,12 @@ def load_runtime(
     load_artifacts=True,
     trt_vit=None,               # NEW
     use_trt_vit=False,          # NEW
+    calibration_artifact_dir_override=None,
 ):
     
     output_dir = output_dir_override or OUTPUT_DIR
+    calibration_artifact_dir = None
+    crop_anchor_ref_path = None
     checkpoint_path = checkpoint_path_override or CHECKPOINT_PATH
     yolo_r_path = yolo_r_path_override or YOLO_R_PATH
 
@@ -2494,10 +2571,25 @@ def load_runtime(
             sigma_by_rc,
             mahalanobis_stats,
             pca_artifact,
+            calibration_artifact_dir,
         ) = load_calibration_artifacts_from_dir(
-            output_dir,
+            output_dir=output_dir,
             ref_image_path_override=ref_image_path_override,
+            calibration_artifact_dir_override=calibration_artifact_dir_override,
         )
+
+        crop_anchor_ref_path = os.path.join(
+            calibration_artifact_dir,
+            CROP_ANCHOR_REF_NAME,
+        )
+
+        if USE_ALIGNMENT and not os.path.isfile(crop_anchor_ref_path):
+            raise RuntimeError(
+                "Missing crop_anchor_reference.json. "
+                f"Expected at: {crop_anchor_ref_path}. "
+                "Run calibration once with the updated AI team crop-anchor logic."
+            )
+
     else:
         ref_pre_bgr = None
         reference_r = None
@@ -2508,6 +2600,13 @@ def load_runtime(
         sigma_by_rc = {}
         mahalanobis_stats = None
         pca_artifact = None
+
+        calibration_artifact_dir = calibration_artifact_dir_override
+        if calibration_artifact_dir:
+            crop_anchor_ref_path = os.path.join(
+                calibration_artifact_dir,
+                CROP_ANCHOR_REF_NAME,
+            )
 
 
     return {
@@ -2522,6 +2621,8 @@ def load_runtime(
         "yolo_r_path": yolo_r_path,
         "ref_image_path_override": ref_image_path_override,
         "tyre_name": tyre_name_override,
+        "calibration_artifact_dir": calibration_artifact_dir,
+        "crop_anchor_ref_path": crop_anchor_ref_path,
         "ref_pre_bgr": ref_pre_bgr,
         "reference_bank": reference_bank,
         "reference_bank_meta": reference_bank_meta,
@@ -2617,21 +2718,6 @@ def warmup_runtime(runtime):
                         os.remove(p)
                 except Exception:
                     pass
-
-        # Warm up alignment
-        try:
-            ref_pre_bgr = runtime.get("ref_pre_bgr")
-            if ref_pre_bgr is not None:
-                _ = align_crop_from_preprocessed(
-                    pre_bgr=ref_pre_bgr.copy(),
-                    ref_pre_bgr=ref_pre_bgr,
-                    r_detector=None,
-                    save_template_path=None,
-                    ref_info=runtime.get("reference_band_info"),
-                    use_incoming_r_detection=False,
-                )
-        except Exception:
-            pass
 
         torch.cuda.synchronize()
         print("[WARMUP] done")

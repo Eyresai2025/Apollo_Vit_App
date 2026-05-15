@@ -28,6 +28,7 @@ from src.COMMON.cycle_engine import (
     _maybe_warmup_runtimes,
     run_cycle,
     preload_live_runtimes,
+    clear_runtime_cache,
 )
 
 from src.camera.HARDWARE_TRIGGER import (
@@ -342,7 +343,10 @@ class ContinuousCycleWorker(QObject):
             self.status_update.emit(f"   Captured: {success_count}/{len(images)} cameras")
             self.capture_completed.emit(images)
             
-            cycle_capture_dir, cycle_id = build_cycle_capture_dir(self.media_root)
+            cycle_capture_dir, cycle_id = build_cycle_capture_dir(
+                self.media_root,
+                sku_name=self.sku_name,
+            )
             self.status_update.emit(f" Cycle directory: {cycle_id}")
             
             self.status_update.emit(" Saving images...")
@@ -496,7 +500,15 @@ class ContinuousCycleWorker(QObject):
             vit_gpu_sem = threading.Semaphore(VIT_GPU_CONCURRENCY)
             yolo_gpu_sem = threading.Semaphore(YOLO_GPU_CONCURRENCY)
             
-            output_root = os.path.join(self.media_root, "output")
+            date_str = datetime.now().strftime("%d-%m-%Y")
+
+            output_root = os.path.join(
+                self.media_root,
+                "Output",
+                self.sku_name,
+                date_str,
+            )
+
             os.makedirs(output_root, exist_ok=True)
             
             self.status_update.emit("🚀 Running AI inference on all sides...")
@@ -640,9 +652,13 @@ def resolve_cycle_capture_dir(
     media_root: str,
     cycle_id: Optional[str],
     demo_capture_root: Optional[str],
+    sku_name: str = "UNKNOWN_SKU",
 ) -> tuple[str, str]:
     if CAMERA_CAPTURE_ENABLED:
-        cycle_capture_dir, cycle_id = build_cycle_capture_dir(media_root)
+        cycle_capture_dir, cycle_id = build_cycle_capture_dir(
+            media_root,
+            sku_name=sku_name,
+        )
         return cycle_capture_dir, cycle_id
 
     if demo_capture_root:
@@ -651,7 +667,10 @@ def resolve_cycle_capture_dir(
             cycle_id = f"Cycle_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         return cycle_capture_dir, cycle_id
 
-    today_root = _get_today_capture_root(media_root)
+    today_root = _get_today_capture_root(
+        media_root,
+        sku_name=sku_name,
+    )
     existing = [
         d for d in os.listdir(today_root)
         if os.path.isdir(os.path.join(today_root, d)) and d.startswith("Cycle_")
@@ -752,7 +771,10 @@ def run_capture_folder_cycle(
     shared_artifacts_dir = _get_sku_artifacts_dir(media_root, sku_name)
 
     cycle_capture_dir, cycle_id = resolve_cycle_capture_dir(
-        media_root=media_root, cycle_id=cycle_id, demo_capture_root=demo_capture_root,
+        media_root=media_root,
+        cycle_id=cycle_id,
+        demo_capture_root=demo_capture_root,
+        sku_name=sku_name,
     )
 
     image_map = build_cycle_image_map(
@@ -779,7 +801,15 @@ def run_capture_folder_cycle(
 
     r_gpu_sem, vit_gpu_sem, yolo_gpu_sem = build_gpu_semaphores()
 
-    output_root = os.path.join(media_root, "output")
+    date_str = datetime.now().strftime("%d-%m-%Y")
+
+    output_root = os.path.join(
+        media_root,
+        "Output",
+        sku_name,
+        date_str,
+    )
+
     os.makedirs(output_root, exist_ok=True)
     set_live_progress(
         phase="INFERENCE",

@@ -27,7 +27,7 @@ from src.models.Pipeline import inference_pipeline_tread_mahal_pca as tread
 from src.models.Pipeline.yolo_patch_classifier import load_yolo_seg
 
 try:
-    from src.models.Pipeline.R_inner_mapping_alignment import build_r_detector
+    from src.models.Pipeline.R_Detection_align_crop import build_r_detector
 except Exception:
     build_r_detector = None
 
@@ -95,6 +95,22 @@ CAMERA_CAPTURE_ENABLED = False
 CAPTURE_IMAGE_FORMAT = ".png"
 CAPTURE_JPEG_QUALITY = 95
 
+# =========================================================
+# SKU / PER-SIDE CALIBRATION ARTIFACT HELPERS
+# Final structure:
+#   media/AI_Calibration_Files/<SKU>/calibration_<side>/artifacts
+# =========================================================
+
+CALIBRATION_ROOT_DIR_NAME = "AI_Calibration_Files"
+
+SIDE_CALIBRATION_DIRS = {
+    "sidewall1": "calibration_sidewall1",
+    "sidewall2": "calibration_sidewall2",
+    "innerwall": "calibration_innerwall",
+    "tread": "calibration_tread",
+    "bead": "calibration_bead",
+} 
+
 
 # =========================================================
 # SIDE MODULES / ORDER / CAMERA MAP
@@ -140,13 +156,31 @@ CAMERA_SERIAL_MAP = _build_camera_serial_map_from_env()
 _RUNTIME_CACHE: Dict[str, Dict[str, Any]] = {}
 _WARMED_RUNTIME_KEYS: set = set()
 
+def clear_runtime_cache():
+    """
+    Call this after calibration is completed or when SKU/artifacts are changed.
+    """
+    _RUNTIME_CACHE.clear()
+    _WARMED_RUNTIME_KEYS.clear()
+    print("[MAIN] runtime cache cleared")
 
 # =========================================================
 # FOLDER STRUCTURE HELPERS
 # =========================================================
-def _get_today_capture_root(media_root: str) -> str:
+def _get_today_capture_root(media_root: str, sku_name: str = "UNKNOWN_SKU") -> str:
+    """
+    Final capture input structure:
+        media/Capture_Input/<SKU>/<date>/Cycle_N
+    """
     date_str = datetime.now().strftime("%d-%m-%Y")
-    today_dir = os.path.join(media_root, "capture", date_str)
+
+    today_dir = os.path.join(
+        media_root,
+        "Capture_Input",
+        sku_name,
+        date_str,
+    )
+
     os.makedirs(today_dir, exist_ok=True)
     return today_dir
 
@@ -168,8 +202,19 @@ def _next_cycle_number(today_capture_root: str) -> int:
     return max(nums) + 1 if nums else 1
 
 
-def build_cycle_capture_dir(media_root: str) -> tuple[str, str]:
-    today_root = _get_today_capture_root(media_root)
+def build_cycle_capture_dir(
+    media_root: str,
+    sku_name: str = "UNKNOWN_SKU",
+) -> tuple[str, str]:
+    """
+    Creates:
+        media/Capture_Input/<SKU>/<date>/Cycle_N
+    """
+    today_root = _get_today_capture_root(
+        media_root=media_root,
+        sku_name=sku_name,
+    )
+
     n = _next_cycle_number(today_root)
 
     cycle_id = f"Cycle_{n}"
@@ -322,34 +367,123 @@ def _resolve_sides(sides_to_run: Optional[List[str]]) -> List[str]:
     return sides_to_run
 
 
+
+
+
 def _get_sku_calibration_dir(media_root: str, sku_name: str) -> str:
-    sku_dir = os.path.join(media_root, "calibration", sku_name)
+    """
+    Returns:
+        media/AI_Calibration_Files/<SKU>
+    """
+    sku_dir = os.path.join(
+        media_root,
+        CALIBRATION_ROOT_DIR_NAME,
+        sku_name,
+    )
 
     if not os.path.isdir(sku_dir):
-        raise FileNotFoundError(f"SKU calibration folder not found: {sku_dir}")
+        raise FileNotFoundError(
+            f"SKU calibration folder not found: {sku_dir}"
+        )
 
     return sku_dir
 
 
-def _get_sku_artifacts_dir(media_root: str, sku_name: str) -> str:
-    artifacts_dir = os.path.join(_get_sku_calibration_dir(media_root, sku_name), "artifacts")
+def _get_side_calibration_dir(
+    media_root: str,
+    sku_name: str,
+    side_name: str,
+) -> str:
+    """
+    Returns:
+        media/AI_Calibration_Files/<SKU>/calibration_<side>
+    """
+    if side_name not in SIDE_CALIBRATION_DIRS:
+        raise ValueError(f"Unknown side for calibration folder: {side_name}")
+
+    side_dir = os.path.join(
+        _get_sku_calibration_dir(media_root, sku_name),
+        SIDE_CALIBRATION_DIRS[side_name],
+    )
+
+    if not os.path.isdir(side_dir):
+        raise FileNotFoundError(
+            f"Side calibration folder not found for {side_name}: {side_dir}"
+        )
+
+    return side_dir
+
+
+def _get_side_artifacts_dir(
+    media_root: str,
+    sku_name: str,
+    side_name: str,
+) -> str:
+    """
+    Returns:
+        media/AI_Calibration_Files/<SKU>/calibration_<side>/artifacts
+    """
+    artifacts_dir = os.path.join(
+        _get_side_calibration_dir(media_root, sku_name, side_name),
+        "artifacts",
+    )
 
     if not os.path.isdir(artifacts_dir):
-        raise FileNotFoundError(f"SKU artifacts folder not found: {artifacts_dir}")
+        raise FileNotFoundError(
+            f"Artifacts folder not found for {side_name}: {artifacts_dir}"
+        )
 
     return artifacts_dir
 
 
-def _shared_artifacts_ref_image(media_root: str, sku_name: str) -> str:
+def _get_sku_artifacts_dir(
+    media_root: str,
+    sku_name: str,
+    side_name: Optional[str] = None,
+):
+    """
+    Backward-compatible helper.
+
+    If side_name is passed:
+        returns that side's artifacts folder.
+
+    If side_name is not passed:
+        returns the SKU calibration root. This avoids breaking older print/debug code.
+    """
+    if side_name is not None:
+        return _get_side_artifacts_dir(media_root, sku_name, side_name)
+
+    return _get_sku_calibration_dir(media_root, sku_name)
+
+
+def _side_artifacts_ref_image(
+    media_root: str,
+    sku_name: str,
+    side_name: str,
+) -> str:
     ref_img = os.path.join(
-        _get_sku_artifacts_dir(media_root, sku_name),
+        _get_side_artifacts_dir(media_root, sku_name, side_name),
         "alignment_reference_polarized.png",
     )
 
     if not os.path.isfile(ref_img):
-        raise FileNotFoundError(f"Reference image not found: {ref_img}")
+        raise FileNotFoundError(
+            f"Reference image not found for {side_name}: {ref_img}"
+        )
 
     return ref_img
+
+
+def _shared_artifacts_ref_image(media_root: str, sku_name: str) -> str:
+    """
+    Backward-compatible helper.
+    Uses sidewall1 reference by default if older code calls this.
+    """
+    return _side_artifacts_ref_image(
+        media_root=media_root,
+        sku_name=sku_name,
+        side_name="sidewall1",
+    )
 
 
 # =========================================================
@@ -533,23 +667,57 @@ def _build_same_model_side_configs(
     tyre_name=DEFAULT_TYRE_NAME,
     use_yolo_seg=DEFAULT_USE_YOLO_SEG,
 ) -> Dict[str, Dict[str, Any]]:
-    shared_ref_image = _shared_artifacts_ref_image(media_root, sku_name)
+    """
+    Builds per-side runtime config.
 
-    common = dict(
-        checkpoint_path=vit_checkpoint_path,
-        output_dir=media_root,
-        yolo_r_path=r_detector_path,
-        use_yolo_seg=use_yolo_seg,
-        tyre_name=tyre_name,
-    )
+    Final artifact layout:
+        media/AI_Calibration_Files/<SKU>/calibration_sidewall1/artifacts
+        media/AI_Calibration_Files/<SKU>/calibration_sidewall2/artifacts
+        media/AI_Calibration_Files/<SKU>/calibration_innerwall/artifacts
+        media/AI_Calibration_Files/<SKU>/calibration_tread/artifacts
+        media/AI_Calibration_Files/<SKU>/calibration_bead/artifacts
+    """
 
-    return {
-        "innerwall": {**common, "ref_image_path": shared_ref_image},
-        "sidewall1": {**common, "ref_image_path": shared_ref_image},
-        "sidewall2": {**common, "ref_image_path": shared_ref_image},
-        "tread": {**common, "ref_image_path": shared_ref_image},
-        "bead": {**common, "ref_image_path": shared_ref_image},
-    }
+    side_configs: Dict[str, Dict[str, Any]] = {}
+
+    for side_name in DEFAULT_SIDE_ORDER:
+        side_artifacts_dir = _get_side_artifacts_dir(
+            media_root=media_root,
+            sku_name=sku_name,
+            side_name=side_name,
+        )
+
+        side_ref_image = os.path.join(
+            side_artifacts_dir,
+            "alignment_reference_polarized.png",
+        )
+
+        if not os.path.isfile(side_ref_image):
+            raise FileNotFoundError(
+                f"Missing alignment reference for {side_name}: {side_ref_image}"
+            )
+
+        side_configs[side_name] = dict(
+            checkpoint_path=vit_checkpoint_path,
+            output_dir=media_root,
+            yolo_r_path=r_detector_path,
+            use_yolo_seg=use_yolo_seg,
+            tyre_name=tyre_name,
+
+            # IMPORTANT:
+            # Each side gets its own artifact folder.
+            calibration_artifact_dir=side_artifacts_dir,
+
+            # Passed for backward compatibility.
+            # Actual artifact loading uses calibration_artifact_dir_override first.
+            ref_image_path=side_ref_image,
+        )
+
+        print(
+            f"[MAIN][ARTIFACTS] {side_name} -> {side_artifacts_dir}"
+        )
+
+    return side_configs
 
 
 def _build_optional_trt_vit(checkpoint_path: str, device: str, side_name: str):
@@ -603,6 +771,7 @@ def _load_runtime_with_optional_trt(
         yolo_r_path_override=side_cfg.get("yolo_r_path"),
         tyre_name_override=side_cfg.get("tyre_name"),
         load_artifacts=True,
+        calibration_artifact_dir_override=side_cfg.get("calibration_artifact_dir"),
     )
 
     if use_trt_vit:
@@ -611,14 +780,24 @@ def _load_runtime_with_optional_trt(
 
     try:
         return module.load_runtime(**kwargs)
+
     except TypeError as e:
+        removed_any = False
+
         if "trt_vit" in kwargs or "use_trt_vit" in kwargs:
-            print(
-                f"[MAIN][WARN] {side_name} load_runtime does not accept TRT kwargs yet. "
-                f"Falling back. error={e}"
-            )
             kwargs.pop("trt_vit", None)
             kwargs.pop("use_trt_vit", None)
+            removed_any = True
+
+        if "calibration_artifact_dir_override" in kwargs:
+            kwargs.pop("calibration_artifact_dir_override", None)
+            removed_any = True
+
+        if removed_any:
+            print(
+                f"[MAIN][WARN] {side_name} load_runtime rejected one optional kwarg. "
+                f"Retrying without optional kwargs. error={e}"
+            )
             return module.load_runtime(**kwargs)
 
         raise
@@ -900,12 +1079,32 @@ def run_side_pipeline(
                     use_incoming_r_detection=False,
                 )
             else:
+                crop_anchor_ref_path = runtime.get("crop_anchor_ref_path")
+
+                if crop_anchor_ref_path and not os.path.isfile(crop_anchor_ref_path):
+                    raise RuntimeError(
+                        f"Missing crop anchor reference for {side_name}: {crop_anchor_ref_path}"
+                    )
+
+                crop_anchor_debug_path = os.path.join(
+                    side_crop_dir,
+                    f"{side_name}_crop_anchor_debug.png",
+                )
+
+                aligned_template_path = os.path.join(
+                    side_crop_dir,
+                    "aligned_template.png",
+                )
+
                 crop_bgr = module.align_crop_from_preprocessed(
                     pre_bgr=pre_bgr,
                     ref_pre_bgr=runtime["ref_pre_bgr"],
                     r_detector=runtime.get("r_detector"),
-                    save_template_path=None,
+                    save_template_path=aligned_template_path,
                     reference_r=runtime.get("reference_r"),
+                    crop_anchor_ref_path=crop_anchor_ref_path,
+                    crop_anchor_debug_path=crop_anchor_debug_path,
+                    debug_name=f"INFER_{side_name}_{name}",
                 )
 
         crop_gray = module.to_gray(crop_bgr)

@@ -566,6 +566,7 @@ class NewSKUPage(QWidget):
             if widget is not None:
                 widget.setText(str(self.sku_meta.get(key, "") or ""))
         for key, default in [
+            ("recipe_number", 1),
             ("inspection_zones", 5),
             ("image_count_per_zone", 20),
             ("train_good_count", 10),
@@ -772,6 +773,11 @@ class NewSKUPage(QWidget):
         operator_edit = QLineEdit()
         operator_edit.setPlaceholderText("Enter operator name")
 
+        recipe_number_spin = QSpinBox()
+        recipe_number_spin.setMinimum(1)
+        recipe_number_spin.setMaximum(9999)
+        recipe_number_spin.setValue(_to_int(self.sku_meta.get("recipe_number", 1), 1))
+
         zones_spin = QSpinBox()
         zones_spin.setMinimum(1)
         zones_spin.setMaximum(5)
@@ -786,6 +792,7 @@ class NewSKUPage(QWidget):
 
         self.wizard_widgets = {
             "sku_name": sku_edit,
+            "recipe_number": recipe_number_spin,
             "tyre_name": tyre_name_edit,
             "tyre_size": size_edit,
             "barcode": barcode_edit,
@@ -804,6 +811,7 @@ class NewSKUPage(QWidget):
             train_good_spin.setValue(_to_int(env_vars.get("NEW_SKU_DEFAULT_TRAIN_GOOD_COUNT", 10), 10))
 
         form.addRow("SKU Name", sku_edit)
+        form.addRow("Recipe Number", recipe_number_spin)
         form.addRow("Tyre Name", tyre_name_edit)
         form.addRow("Tyre Size", size_edit)
         form.addRow("Barcode", barcode_edit)
@@ -835,6 +843,7 @@ class NewSKUPage(QWidget):
 
     def _save_sku_setup(self):
         sku_name = self.wizard_widgets["sku_name"].text().strip()
+        recipe_number = int(self.wizard_widgets["recipe_number"].value())
         tyre_name = self.wizard_widgets["tyre_name"].text().strip()
         tyre_size = self.wizard_widgets["tyre_size"].text().strip()
         barcode = self.wizard_widgets["barcode"].text().strip()
@@ -857,6 +866,8 @@ class NewSKUPage(QWidget):
 
         self.sku_meta.update({
             "sku_name": sku_name,
+            "recipe_number": recipe_number,
+            "plc_recipe_number": recipe_number,
             "tyre_name": tyre_name,
             "tyre_size": tyre_size,
             "barcode": barcode,
@@ -870,19 +881,21 @@ class NewSKUPage(QWidget):
         self.recipe_doc["sku_meta"] = dict(self.sku_meta)
 
         try:
+            clean_sku_meta = dict(self.sku_meta)
+            clean_sku_meta.pop("machine_serial", None)
+
             self.recipe_service.new_sku_col.update_one(
                 {"type": "sku_setup", "sku_name": sku_name},
                 {
                     "$set": {
                         "type": "sku_setup",
                         "sku_name": sku_name,
-                        "sku_meta": dict(self.sku_meta),
+                        "sku_meta": clean_sku_meta,
                         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     },
                     "$setOnInsert": {
                         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     },
-                    "$unset": {"sku_meta.machine_serial": ""},
                 },
                 upsert=True,
             )
@@ -915,8 +928,8 @@ class NewSKUPage(QWidget):
         ))
 
         hint = QLabel(
-            "Production mode uses RECIPE_TARGET_x configuration from .env. "
-            "DB74 live servo positions are read only. Recipe targets are saved to MongoDB and later written to DB130."
+            "Production mode uses src/COMMON/recipe_tag_map.py as the master recipe tag map. "
+            "DB74 live servo positions are read only. Recipe targets are saved to MongoDB and written to DB53."
         )
         hint.setObjectName("HintText")
         lay.addWidget(hint)
@@ -946,15 +959,17 @@ class NewSKUPage(QWidget):
         lay.addLayout(mode_row)
 
         self.axis_table = QTableWidget()
-        self.axis_table.setColumnCount(9)
+        self.axis_table.setColumnCount(11)
         self.axis_table.setHorizontalHeaderLabels([
             "Group",
+            "Axis",
+            "Position",
             "Target Key",
-            "Target Name",
+            "DB53 Address",
             "Physical Axis",
             "Axis Name",
             "Servo IP",
-            "Live Position",
+            "Current Axis Position",
             "Target Value",
             "Delta",
         ])
@@ -969,22 +984,25 @@ class NewSKUPage(QWidget):
         refresh_btn = self._make_button("Refresh Live Axis", "secondary")
         refresh_btn.clicked.connect(self._refresh_axis_table)
 
-        capture_all_btn = self._make_button("Capture All Live Targets", "primary")
-        capture_all_btn.clicked.connect(lambda: self._capture_axis_group("all"))
+        # capture_all_btn = self._make_button("Capture All Live Targets", "primary")
+        # capture_all_btn.clicked.connect(lambda: self._capture_axis_group("all"))
+        capture_selected_btn = self._make_button("Capture Selected Target", "primary")
+        capture_selected_btn.clicked.connect(self._capture_selected_axis_target)
 
-        capture_camera_btn = self._make_button("Capture Machine/Camera Targets", "primary")
-        capture_camera_btn.clicked.connect(lambda: self._capture_axis_group("camera"))
+        # capture_camera_btn = self._make_button("Capture Machine/Camera Targets", "primary")
+        # capture_camera_btn.clicked.connect(lambda: self._capture_axis_group("camera"))
 
-        capture_laser_btn = self._make_button("Capture Laser Targets", "primary")
-        capture_laser_btn.clicked.connect(lambda: self._capture_axis_group("laser"))
+        # capture_laser_btn = self._make_button("Capture Laser Targets", "primary")
+        # capture_laser_btn.clicked.connect(lambda: self._capture_axis_group("laser"))
 
         next_btn = self._make_button("Next: Capture Images", "secondary")
         next_btn.clicked.connect(lambda: self._switch_tab(TAB_CAPTURE))
 
         btn_row.addWidget(refresh_btn)
-        btn_row.addWidget(capture_all_btn)
-        btn_row.addWidget(capture_camera_btn)
-        btn_row.addWidget(capture_laser_btn)
+        btn_row.addWidget(capture_selected_btn)
+        # btn_row.addWidget(capture_all_btn)
+        # btn_row.addWidget(capture_camera_btn)
+        # btn_row.addWidget(capture_laser_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(next_btn)
         lay.addLayout(btn_row)
@@ -1038,8 +1056,10 @@ class NewSKUPage(QWidget):
 
         return {
             "target_key": cfg.get("target_key", ""),
+            "legacy_key": cfg.get("legacy_key"),
             "target_index": cfg.get("target_index"),
             "group": str(cfg.get("group", "")).upper(),
+            "position": cfg.get("position", ""),
 
             "axis_id": axis_id,
             "axis_key": axis_key,
@@ -1049,9 +1069,15 @@ class NewSKUPage(QWidget):
             "target_name": cfg.get("target_name", ""),
             "value": None if value is None or value == "" else float(value),
 
+            # PLC DB53 write address
             "write_db": cfg.get("write_db"),
             "write_byte": cfg.get("write_byte"),
             "type": cfg.get("type", "REAL"),
+
+            # DB75 reference for Axis Status / debugging only
+            "db75_db": cfg.get("db75_db"),
+            "db75_byte": cfg.get("db75_byte"),
+            "db75_type": cfg.get("db75_type", "REAL"),
 
             "captured_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "source": source,
@@ -1115,15 +1141,17 @@ class NewSKUPage(QWidget):
             self.axis_table.setItem(0, 1, QTableWidgetItem(str(e)))
             return
 
-        self.axis_table.setColumnCount(9)
+        self.axis_table.setColumnCount(11)
         self.axis_table.setHorizontalHeaderLabels([
             "Group",
+            "Axis",
+            "Position",
             "Target Key",
-            "Target Name",
+            "DB53 Address",
             "Physical Axis",
             "Axis Name",
             "Servo IP",
-            "Live Position",
+            "Current Axis Position",
             "Target Value",
             "Delta",
         ])
@@ -1152,10 +1180,18 @@ class NewSKUPage(QWidget):
             except Exception:
                 delta = ""
 
+            db_no = cfg.get("write_db", "")
+            write_byte = cfg.get("write_byte", "")
+            db53_address = ""
+            if db_no not in ("", None) and write_byte not in ("", None, -1):
+                db53_address = f"DB{db_no}.DBD{write_byte}"
+
             values = [
                 group,
-                target_key,
                 str(cfg.get("target_name", "")),
+                str(cfg.get("position", "")),
+                target_key,
+                db53_address,
                 axis_key,
                 str(cfg.get("axis_name", "")),
                 str(cfg.get("axis_ip", "")),
@@ -1170,7 +1206,7 @@ class NewSKUPage(QWidget):
 
                 # In manual mode, allow editing only Target Value column.
                 editable = False
-                if self.axis_entry_mode == "manual" and col == 7:
+                if self.axis_entry_mode == "manual" and col == 9:
                     editable = True
 
                 if editable:
@@ -1254,6 +1290,98 @@ class NewSKUPage(QWidget):
             f"{captured_count} target values captured successfully."
         )
     
+    def _capture_selected_axis_target(self):
+        """
+        Capture only the selected recipe target row from current live PLC position.
+
+        This is the correct method for HOME / WORK1 / WORK2 / WORK3 teaching,
+        because one physical axis has only one live position at a time.
+        """
+        if self.axis_table is None:
+            return
+
+        selected_rows = self.axis_table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(
+                self,
+                "Capture Selected Target",
+                "Please select one recipe target row first."
+            )
+            return
+
+        row = selected_rows[0].row()
+
+        target_key_item = self.axis_table.item(row, 3)
+        if target_key_item is None:
+            QMessageBox.warning(
+                self,
+                "Capture Selected Target",
+                "Selected row does not have a target key."
+            )
+            return
+
+        target_key = target_key_item.text().strip()
+        if not target_key:
+            QMessageBox.warning(
+                self,
+                "Capture Selected Target",
+                "Selected row target key is empty."
+            )
+            return
+
+        try:
+            positions = self.recipe_service.read_current_axis_positions()
+            target_cfg_map = self.recipe_service.get_recipe_target_config_map()
+        except Exception as e:
+            QMessageBox.critical(self, "Axis Capture Error", str(e))
+            return
+
+        cfg = target_cfg_map.get(target_key)
+        if not cfg:
+            QMessageBox.warning(
+                self,
+                "Capture Selected Target",
+                f"Target config not found for: {target_key}"
+            )
+            return
+
+        axis_id = int(cfg.get("axis_id", 0) or 0)
+        axis_key = cfg.get("axis_key") or f"axis_{axis_id:02d}"
+
+        info = positions.get(axis_key)
+        if not info:
+            QMessageBox.warning(
+                self,
+                "Capture Selected Target",
+                f"Live position not found for {axis_key}."
+            )
+            return
+
+        live_value = info.get("value")
+        if live_value is None:
+            QMessageBox.warning(
+                self,
+                "Capture Selected Target",
+                f"Live value is empty for {axis_key}."
+            )
+            return
+
+        existing = dict(self.recipe_doc.get("recipe_axis_targets", {}) or {})
+        existing[target_key] = self._make_recipe_target_doc(
+            cfg=cfg,
+            value=live_value,
+            source="PLC_SELECTED_ROW_CAPTURE",
+        )
+
+        self.recipe_doc["recipe_axis_targets"] = existing
+        self._sync_legacy_axis_targets_from_recipe_targets()
+        self._refresh_axis_table()
+
+        QMessageBox.information(
+            self,
+            "Capture Selected Target",
+            f"Captured {target_key} = {float(live_value):.3f}"
+        )
     def _apply_manual_axis_targets_from_table(self, silent=False):
         """
         Apply manually typed target values from the Axis Teaching table.
@@ -1265,12 +1393,12 @@ class NewSKUPage(QWidget):
 
         target_cfg_map = self.recipe_service.get_recipe_target_config_map()
 
-        recipe_targets = {}
+        recipe_targets = dict(self.recipe_doc.get("recipe_axis_targets", {}) or {})
 
         for row in range(self.axis_table.rowCount()):
             group_item = self.axis_table.item(row, 0)
-            target_key_item = self.axis_table.item(row, 1)
-            target_value_item = self.axis_table.item(row, 7)
+            target_key_item = self.axis_table.item(row, 3)
+            target_value_item = self.axis_table.item(row, 9)
 
             if target_key_item is None:
                 continue
@@ -2261,7 +2389,9 @@ class NewSKUPage(QWidget):
         sku_meta = dict(self.sku_meta)
         sku_meta.pop("machine_serial", None)
 
-        return self.recipe_service.build_recipe_doc(
+        recipe_number = int(self.sku_meta.get("recipe_number", 1) or 1)
+
+        recipe_doc = self.recipe_service.build_recipe_doc(
             sku_meta=sku_meta,
             camera_axis_targets=camera_targets,
             laser_axis_targets=laser_targets,
@@ -2273,6 +2403,11 @@ class NewSKUPage(QWidget):
             validation_result=self.latest_validation_result,
             author=str(self.sku_meta.get("operator") or "operator"),
         )
+
+        recipe_doc["recipe_number"] = recipe_number
+        recipe_doc["plc_recipe_number"] = recipe_number
+
+        return recipe_doc
 
     def _preview_recipe(self):
         try:
@@ -2295,6 +2430,7 @@ class NewSKUPage(QWidget):
 
             text = (
                 f"SKU: {recipe_doc.get('sku_name')}\n"
+                f"Recipe Number: {recipe_doc.get('recipe_number')}\n"
                 f"Tyre Name: {recipe_doc.get('tyre_name')}\n"
                 f"Tyre Size: {recipe_doc.get('tyre_size')}\n"
                 f"Barcode: {self.sku_meta.get('barcode', '')}\n"
@@ -2326,21 +2462,74 @@ class NewSKUPage(QWidget):
     def _save_recipe_final(self):
         try:
             recipe_doc = self._build_final_recipe_doc()
+
             result = self.recipe_service.save_recipe(
                 recipe_doc,
                 plc_client=self.plc_client,
                 write_to_plc=None,
             )
+
+            plc_result = result.get("plc_result", {}) or {}
+            verify_result = plc_result.get("verify_result", {}) or {}
+            recipe_number_result = plc_result.get("recipe_number_result", {}) or {}
+            plc_enabled = bool(plc_result.get("enabled", False))
+            plc_written = bool(plc_result.get("written", False))
+            plc_verified = bool(plc_result.get("verified", False))
+
+            written_items = plc_result.get("written_items", []) or []
+            skipped_items = plc_result.get("skipped_items", []) or []
+            mismatches = plc_result.get("mismatches", []) or verify_result.get("mismatches", []) or []
+
+            if not plc_enabled:
+                plc_block = (
+                    "PLC Write: Disabled\n"
+                    f"PLC Message: {plc_result.get('message', '')}"
+                )
+            else:
+                plc_block = (
+                    f"PLC Write: {'OK' if plc_written else 'NOT OK'}\n"
+                    f"PLC Verify: {'OK' if plc_verified else 'NOT OK / SKIPPED'}\n"
+                    f"Recipe Number Write: {'OK' if recipe_number_result.get('written') else 'NOT OK / SKIPPED'}\n"
+                    f"Recipe Number Verify: {'OK' if recipe_number_result.get('verified') else 'NOT OK / SKIPPED'}\n"
+                    f"Targets Written: {len(written_items)}\n"
+                    f"Targets Skipped: {len(skipped_items)}\n"
+                    f"Verify Count: {verify_result.get('verified_count', 0)}\n"
+                    f"Mismatch Count: {verify_result.get('mismatch_count', len(mismatches))}\n"
+                    f"PLC Message: {plc_result.get('message', '')}"
+                )
+
+            if mismatches:
+                mismatch_lines = []
+                for item in mismatches[:8]:
+                    mismatch_lines.append(
+                        f"- {item.get('target_key')} | "
+                        f"Expected={item.get('expected')} | "
+                        f"Actual={item.get('actual')} | "
+                        f"DB{item.get('db')}.DBD{item.get('byte')}"
+                    )
+
+                extra = ""
+                if len(mismatches) > 8:
+                    extra = f"\n... and {len(mismatches) - 8} more mismatches"
+
+                mismatch_text = "\n\nPLC Mismatches:\n" + "\n".join(mismatch_lines) + extra
+            else:
+                mismatch_text = ""
+
             msg = (
                 f"Recipe saved successfully.\n\n"
                 f"SKU: {result.get('sku_name')}\n"
                 f"Version: {result.get('version')}\n"
                 f"Local Backup:\n{result.get('backup_path')}\n\n"
-                f"PLC:\n{result.get('plc_result', {}).get('message')}"
+                f"{plc_block}"
+                f"{mismatch_text}"
             )
+
             if self.recipe_summary_lbl is not None:
                 self.recipe_summary_lbl.setText(msg)
+
             QMessageBox.information(self, "Recipe Saved", msg)
+
         except Exception as e:
             QMessageBox.critical(self, "Recipe Save Error", str(e))
 

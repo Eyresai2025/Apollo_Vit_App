@@ -163,15 +163,68 @@ BAR_CODE_DIR = os.path.join(MEDIA_PATH, "barcode_images")
 TEST_MODE_REPORTS = os.path.join(MEDIA_PATH, "TestMode Reports")
 
 def get_available_sku_names(media_root):
-    calibration_root = os.path.join(media_root, "calibration")
+    """
+    Final calibration structure:
+        media/AI_Calibration_Files/<SKU>/calibration_sidewall1/artifacts
+        media/AI_Calibration_Files/<SKU>/calibration_sidewall2/artifacts
+        media/AI_Calibration_Files/<SKU>/calibration_innerwall/artifacts
+        media/AI_Calibration_Files/<SKU>/calibration_tread/artifacts
+        media/AI_Calibration_Files/<SKU>/calibration_bead/artifacts
+    """
+    calibration_root = os.path.join(media_root, "AI_Calibration_Files")
+
     if not os.path.isdir(calibration_root):
         return []
+
+    required_side_dirs = [
+        "calibration_sidewall1",
+        "calibration_sidewall2",
+        "calibration_innerwall",
+        "calibration_tread",
+        "calibration_bead",
+    ]
+
     sku_names = []
+
     for name in sorted(os.listdir(calibration_root)):
-        full_path = os.path.join(calibration_root, name)
-        artifacts_dir = os.path.join(full_path, "artifacts")
-        if os.path.isdir(full_path) and name.upper().startswith("SKU") and os.path.isdir(artifacts_dir):
+        sku_dir = os.path.join(calibration_root, name)
+
+        if not os.path.isdir(sku_dir):
+            continue
+
+        if not name.upper().startswith("SKU"):
+            continue
+
+        ok = True
+
+        for side_dir_name in required_side_dirs:
+            artifacts_dir = os.path.join(sku_dir, side_dir_name, "artifacts")
+
+            if not os.path.isdir(artifacts_dir):
+                ok = False
+                break
+
+            required_files = [
+                "alignment_reference_polarized.png",
+                "embedding_bank.pt",
+                "embedding_bank_meta.pt",
+                "thresholds_by_rc.pt",
+                "mahalanobis_stats.pt",
+                "pca_artifact.pt",
+                "reference_r.pt",
+            ]
+
+            for file_name in required_files:
+                if not os.path.isfile(os.path.join(artifacts_dir, file_name)):
+                    ok = False
+                    break
+
+            if not ok:
+                break
+
+        if ok:
             sku_names.append(name)
+
     return sku_names
 
 def _load_onnx_r_with_fallback(onnx_rel_path, label="R-detect ONNX", conf=0.3):
@@ -399,11 +452,18 @@ class LatestCycleImagesWorker(QObject):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
     
-    def __init__(self, media_root, panel_size=(260, 700), fallback_paths=None):
+    def __init__(
+        self,
+        media_root,
+        panel_size=(260, 700),
+        fallback_paths=None,
+        sku_name=None,
+    ):
         super().__init__()
         self.media_root = media_root
         self.panel_w, self.panel_h = panel_size
         self.fallback_paths = fallback_paths or {}
+        self.sku_name = sku_name
         self._stop_event = Event()
     
     @pyqtSlot()
@@ -443,13 +503,50 @@ class LatestCycleImagesWorker(QObject):
         return payload
     
     def _get_latest_cycle_dir(self):
-        output_root = os.path.join(self.media_root, "output")
-        if not os.path.isdir(output_root):
+        """
+        Reads latest output from:
+            media/Output/<SKU>/<date>/Cycle_N
+
+        If sku_name is not available, fallback searches all SKUs.
+        """
+        output_base = os.path.join(self.media_root, "Output")
+
+        if not os.path.isdir(output_base):
             return None
-        cycle_dirs = [os.path.join(output_root, d) for d in os.listdir(output_root)
-                     if os.path.isdir(os.path.join(output_root, d))]
+
+        search_roots = []
+
+        if self.sku_name:
+            sku_root = os.path.join(output_base, self.sku_name)
+            if os.path.isdir(sku_root):
+                search_roots.append(sku_root)
+        else:
+            for sku in os.listdir(output_base):
+                sku_root = os.path.join(output_base, sku)
+                if os.path.isdir(sku_root):
+                    search_roots.append(sku_root)
+
+        cycle_dirs = []
+
+        for sku_root in search_roots:
+            for date_name in os.listdir(sku_root):
+                date_root = os.path.join(sku_root, date_name)
+
+                if not os.path.isdir(date_root):
+                    continue
+
+                for cycle_name in os.listdir(date_root):
+                    cycle_path = os.path.join(date_root, cycle_name)
+
+                    if (
+                        os.path.isdir(cycle_path)
+                        and cycle_name.startswith("Cycle_")
+                    ):
+                        cycle_dirs.append(cycle_path)
+
         if not cycle_dirs:
             return None
+
         cycle_dirs.sort(key=os.path.getmtime, reverse=True)
         return cycle_dirs[0]
     
@@ -717,7 +814,7 @@ class MainWindow(QMainWindow):
         
         self.update_images_timer = QTimer(self)
         self.update_images_timer.timeout.connect(self.refresh_cycle_images_async)
-        self.update_images_timer.start(3000)
+        # self.update_images_timer.start(3000)
         
         # UI freeze monitor (for debugging)
         self._freeze_monitor = QTimer(self)
@@ -933,6 +1030,7 @@ class MainWindow(QMainWindow):
                 media_root=MEDIA_PATH,
                 panel_size=(panel_w, panel_h),
                 fallback_paths=self.startup_image_paths,
+                sku_name=self.selected_live_sku,
             )
             
             def on_finished(payload):
@@ -1264,11 +1362,59 @@ class MainWindow(QMainWindow):
         
         dialog.exec_()
     
+    def validate_selected_sku_calibration(self, sku_name):
+        sku_calibration_dir = os.path.join(
+            MEDIA_PATH,
+            "AI_Calibration_Files",
+            sku_name,
+        )
+
+        if not os.path.isdir(sku_calibration_dir):
+            QMessageBox.critical(
+                self,
+                "Calibration Error",
+                f"Selected SKU folder not found:\n{sku_calibration_dir}",
+            )
+            return False
+
+        required_side_dirs = [
+            "calibration_sidewall1",
+            "calibration_sidewall2",
+            "calibration_innerwall",
+            "calibration_tread",
+            "calibration_bead",
+        ]
+
+        missing = []
+
+        for side_dir_name in required_side_dirs:
+            artifacts_dir = os.path.join(
+                sku_calibration_dir,
+                side_dir_name,
+                "artifacts",
+            )
+
+            if not os.path.isdir(artifacts_dir):
+                missing.append(artifacts_dir)
+
+        if missing:
+            QMessageBox.critical(
+                self,
+                "Calibration Error",
+                "Selected SKU calibration is incomplete.\n\nMissing:\n"
+                + "\n".join(missing[:8]),
+            )
+            return False
+
+        return True
+    
     # REPLACE ENTIRE METHOD:
     def begin_live_flow(self, sku_name, tyre_name):
         """Start live inspection based on deployment mode"""
         self.update_live_info_cards(sku_name, tyre_name)
 
+        if not self.validate_selected_sku_calibration(sku_name):
+            return
         if str(deployment) == "True" and not is_hardware_ready():
             QMessageBox.warning(
                 self,
@@ -1473,48 +1619,77 @@ class MainWindow(QMainWindow):
         # Check if already running
         insp_thread = self.thread_manager.active_threads.get("inspection")
         if insp_thread and insp_thread.isRunning():
-            QMessageBox.information(self, "Live Inspection", "Live inspection is already running.")
+            QMessageBox.information(
+                self,
+                "Live Inspection",
+                "Live inspection is already running."
+            )
             return
-        
+
         sku_name = (sku_name or self.selected_live_sku or "").strip()
         tyre_name = (tyre_name or self.selected_live_tyre_name or "195_65_R15").strip()
-        
+
         if not sku_name:
-            QMessageBox.critical(self, "SKU Error", "Please select a valid SKU.")
+            QMessageBox.critical(
+                self,
+                "SKU Error",
+                "Please select a valid SKU."
+            )
             return
-        
-        sku_calibration_dir = os.path.join(MEDIA_PATH, "calibration", sku_name)
-        if not os.path.isdir(sku_calibration_dir):
-            QMessageBox.critical(self, "Calibration Error", 
-                               f"Selected SKU folder not found:\n{sku_calibration_dir}")
-            return
-        
+
+        # NOTE:
+        # SKU calibration folder validation is already done in begin_live_flow()
+        # using self.validate_selected_sku_calibration(sku_name).
+        # So do not repeat media/AI_Calibration_Files/<SKU> validation here.
+
         if not MAIN_SEG_MODEL_PATH or not os.path.isfile(MAIN_SEG_MODEL_PATH):
-            QMessageBox.critical(self, "Model Error", f"Main model path invalid:\n{MAIN_SEG_MODEL_PATH}")
+            QMessageBox.critical(
+                self,
+                "Model Error",
+                f"Main model path invalid:\n{MAIN_SEG_MODEL_PATH}"
+            )
             return
-        
+
         if not MAIN_VIT_CHECKPOINT_PATH or not os.path.isfile(MAIN_VIT_CHECKPOINT_PATH):
-            QMessageBox.critical(self, "Model Error", f"VIT checkpoint path invalid:\n{MAIN_VIT_CHECKPOINT_PATH}")
+            QMessageBox.critical(
+                self,
+                "Model Error",
+                f"VIT checkpoint path invalid:\n{MAIN_VIT_CHECKPOINT_PATH}"
+            )
             return
-        
+
         if not MAIN_R_DETECTOR_PATH or not os.path.isfile(MAIN_R_DETECTOR_PATH):
-            QMessageBox.critical(self, "Model Error", f"R detector path invalid:\n{MAIN_R_DETECTOR_PATH}")
+            QMessageBox.critical(
+                self,
+                "Model Error",
+                f"R detector path invalid:\n{MAIN_R_DETECTOR_PATH}"
+            )
             return
-        
+
         if CAMERA_CAPTURE_ENABLED:
             if self.multi_cam is None:
-                QMessageBox.critical(self, "Camera Error", 
-                                   "Cameras not initialised. Check connections and restart.")
+                QMessageBox.critical(
+                    self,
+                    "Camera Error",
+                    "Cameras not initialised. Check connections and restart."
+                )
                 return
+
             cam_mgr = self.multi_cam
             demo_capture_root = None
+
         else:
             cam_mgr = None
             demo_capture_root = LOCAL_MULTI_SIDE_TEST_FOLDER
+
             if not demo_capture_root or not os.path.isdir(demo_capture_root):
-                QMessageBox.critical(self, "Path Error", 
-                                   f"Demo capture folder not found:\n{demo_capture_root}")
+                QMessageBox.critical(
+                    self,
+                    "Path Error",
+                    f"Demo capture folder not found:\n{demo_capture_root}"
+                )
                 return
+
         reset_live_progress(total_images=len(self.side_order))
         set_live_progress(
             phase="CAPTURING",
@@ -1524,10 +1699,14 @@ class MainWindow(QMainWindow):
             message="Live inspection started",
         )
         apply_live_progress_to_gui(self)
+
         reset_live_result()
         apply_tyre_result_to_gui(self)
-        self.statusBar().showMessage(f"Live Inspection Started | SKU={sku_name} | TYRE={tyre_name}")
-        
+
+        self.statusBar().showMessage(
+            f"Live Inspection Started | SKU={sku_name} | TYRE={tyre_name}"
+        )
+
         worker = LiveInspectionWorker(
             media_root=MEDIA_PATH,
             sku_name=sku_name,
@@ -1540,15 +1719,19 @@ class MainWindow(QMainWindow):
             multi_camera_manager=cam_mgr,
             demo_capture_root=demo_capture_root,
         )
-        
+
         def on_finished(result):
             self._mark_ui_active()
+
             try:
-                sku = result.get('sku_name', 'Unknown') if isinstance(result, dict) else 'Unknown'
-                tyre = result.get('tyre_name', 'Unknown') if isinstance(result, dict) else 'Unknown'
-                self.statusBar().showMessage(f"Inspection finished | SKU={sku} | TYRE={tyre}")
+                sku = result.get("sku_name", "Unknown") if isinstance(result, dict) else "Unknown"
+                tyre = result.get("tyre_name", "Unknown") if isinstance(result, dict) else "Unknown"
+                self.statusBar().showMessage(
+                    f"Inspection finished | SKU={sku} | TYRE={tyre}"
+                )
             except Exception:
                 self.statusBar().showMessage("Inspection completed")
+
             set_live_progress(
                 phase="COMPLETED",
                 active_zone="All Zones",
@@ -1557,6 +1740,7 @@ class MainWindow(QMainWindow):
                 message="Inspection completed",
             )
             apply_live_progress_to_gui(self)
+
             summary = update_live_result_from_cycle_result(
                 result,
                 total_zones=len(self.side_order),
@@ -1569,23 +1753,37 @@ class MainWindow(QMainWindow):
 
             set_live_result_plc_output(plc_status.get("display", "Not Sent"))
             apply_tyre_result_to_gui(self)
+
             self.update_label_async()
             QTimer.singleShot(700, self.refresh_cycle_images_async)
-        
+
         def on_error(message):
             self._mark_ui_active()
+
             self.statusBar().showMessage(f"Inspection failed: {message}")
+
             set_live_progress(
                 phase="FAILED",
                 active_zone="-",
                 message=message,
             )
             apply_live_progress_to_gui(self)
+
             set_live_result_failed(message)
             apply_tyre_result_to_gui(self)
-            QMessageBox.critical(self, "Live Inspection Error", message)
-        
-        self.thread_manager.start_thread("inspection", worker, on_finished, on_error)
+
+            QMessageBox.critical(
+                self,
+                "Live Inspection Error",
+                message,
+            )
+
+        self.thread_manager.start_thread(
+            "inspection",
+            worker,
+            on_finished,
+            on_error,
+        )
     
     # ========================================================================
     # REMAINING METHODS (unchanged but using thread_manager where applicable)

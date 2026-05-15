@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox
 )
+
 from src.COMMON.axis_status_service import AxisStatusService
 
 
@@ -14,9 +15,12 @@ class AxisStatusPage(QWidget):
     Axis Status page.
 
     Read-only page:
-    - Shows selected SKU / PLC SKU reference.
-    - Shows 12 servo axis values.
-    - Compares current position with recipe position/tolerance.
+    - Reads MongoDB Active Recipe / last_loaded_recipe.
+    - Does NOT read DB75.DBW288.
+    - Shows DB74 live actual position.
+    - Shows DB75 running servo recipe value.
+    - Shows MongoDB saved recipe target value.
+    - Shows delta comparisons.
     - Does not write to PLC.
     """
 
@@ -86,12 +90,12 @@ class AxisStatusPage(QWidget):
         info.setContentsMargins(14, 10, 14, 10)
         info.setSpacing(12)
 
-        sku_title = QLabel("Active PLC SKU:")
-        sku_title.setStyleSheet("font: 800 12px 'Segoe UI'; color:#222; border:none;")
-        info.addWidget(sku_title)
+        recipe_no_title = QLabel("Active Recipe:")
+        recipe_no_title.setStyleSheet("font: 800 12px 'Segoe UI'; color:#222; border:none;")
+        info.addWidget(recipe_no_title)
 
-        self.active_sku_value_lbl = QLabel("UNKNOWN")
-        self.active_sku_value_lbl.setStyleSheet("""
+        self.loaded_recipe_no_lbl = QLabel("UNKNOWN")
+        self.loaded_recipe_no_lbl.setStyleSheet("""
             QLabel {
                 background:#f1f3f5;
                 color:#111;
@@ -100,13 +104,13 @@ class AxisStatusPage(QWidget):
                 font: 900 12px 'Segoe UI';
             }
         """)
-        info.addWidget(self.active_sku_value_lbl)
+        info.addWidget(self.loaded_recipe_no_lbl)
 
-        self.active_sku_lbl = QLabel("Recipe SKU: UNKNOWN")
+        self.active_sku_lbl = QLabel("SKU: UNKNOWN")
         self.active_sku_lbl.setStyleSheet("font: 800 12px 'Segoe UI'; color:#333; border:none;")
         info.addWidget(self.active_sku_lbl)
 
-        self.recipe_status_lbl = QLabel("Recipe: UNKNOWN")
+        self.recipe_status_lbl = QLabel("MongoDB State: UNKNOWN")
         self.recipe_status_lbl.setStyleSheet("font: 800 12px 'Segoe UI'; color:#333; border:none;")
         info.addWidget(self.recipe_status_lbl)
 
@@ -124,7 +128,6 @@ class AxisStatusPage(QWidget):
         info.addWidget(self.overall_status_lbl)
 
         info.addStretch()
-
         root.addWidget(info_panel)
 
         # Table panel
@@ -140,18 +143,20 @@ class AxisStatusPage(QWidget):
         table_layout.setContentsMargins(10, 10, 10, 10)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
+            "Target",
             "Axis",
-            "Current Pos",
-            "Recipe Pos",
-            "Tolerance",
+            "Position",
+            "Current Live Value",
+            "Active Recipe Value",
+            "MongoDB Value",
             "Enabled",
             "Homed",
             "Fault",
             "Status",
         ])
-        self.table.setRowCount(12)
+        self.table.setRowCount(37)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -163,7 +168,7 @@ class AxisStatusPage(QWidget):
             QTableWidget {
                 background:white;
                 gridline-color:#dddddd;
-                font: 700 11px 'Segoe UI';
+                font: 700 10px 'Segoe UI';
                 alternate-background-color:#fafafa;
                 selection-background-color:#eee6f7;
                 selection-color:#111;
@@ -171,7 +176,7 @@ class AxisStatusPage(QWidget):
             QHeaderView::section {
                 background:#571c86;
                 color:white;
-                font: 900 11px 'Segoe UI';
+                font: 900 10px 'Segoe UI';
                 padding:7px;
                 border:none;
                 border-right:1px solid #6f2aa1;
@@ -183,7 +188,7 @@ class AxisStatusPage(QWidget):
         header_view.setStretchLastSection(False)
 
         self.table.verticalHeader().setDefaultSectionSize(30)
-        self.table.setMinimumHeight(380)
+        self.table.setMinimumHeight(420)
 
         table_layout.addWidget(self.table)
         root.addWidget(table_panel, 1)
@@ -217,7 +222,7 @@ class AxisStatusPage(QWidget):
                 "Refresh Now",
                 "#7C19EE",
                 "#873DDD",
-                self.refresh_axis_status
+                self.refresh_axis_status,
             )
         )
 
@@ -228,7 +233,7 @@ class AxisStatusPage(QWidget):
                 "Close",
                 "#130F0F",
                 "#555555",
-                self.close_page
+                self.close_page,
             )
         )
 
@@ -241,44 +246,39 @@ class AxisStatusPage(QWidget):
         QTimer.singleShot(0, self._resize_table_columns)
 
     def _resize_table_columns(self):
-        """
-        Keep the table full-width and balanced.
-        This avoids the large blank area on the right.
-        """
         try:
             total_width = self.table.viewport().width()
 
             if total_width <= 100:
                 return
 
-            # Small safety margin for grid/scrollbar
             total_width = total_width - 6
 
             ratios = [
-                0.22,  # Axis
-                0.13,  # Current Pos
-                0.13,  # Recipe Pos
-                0.10,  # Tolerance
-                0.10,  # Enabled
-                0.10,  # Homed
-                0.09,  # Fault
-                0.13,  # Status
+                0.08,  # Target
+                0.18,  # Axis
+                0.09,  # Position
+                0.12,  # Current Live Value
+                0.12,  # Active Recipe Value
+                0.12,  # MongoDB Value
+                0.07,  # Enabled
+                0.07,  # Homed
+                0.06,  # Fault
+                0.09,  # Status
             ]
 
             used = 0
             for col, ratio in enumerate(ratios):
                 if col == len(ratios) - 1:
-                    width = max(90, total_width - used)
+                    width = max(110, total_width - used)
                 else:
-                    width = max(70, int(total_width * ratio))
+                    width = max(65, int(total_width * ratio))
                     used += width
 
                 self.table.setColumnWidth(col, width)
 
         except Exception:
             pass
-
-
 
     # ------------------------------------------------------------
     # REFRESH
@@ -293,7 +293,6 @@ class AxisStatusPage(QWidget):
         self.refresh_timer.stop()
         self.refresh_state_lbl.setText("Auto Refresh: OFF")
 
-
     def refresh_axis_status(self):
         try:
             result = self.service.get_axis_status()
@@ -303,7 +302,7 @@ class AxisStatusPage(QWidget):
             QMessageBox.warning(
                 self,
                 "Axis Status Error",
-                f"Failed to refresh Axis Status:\n{e}"
+                f"Failed to refresh Axis Status:\n{e}",
             )
 
     # ------------------------------------------------------------
@@ -312,9 +311,14 @@ class AxisStatusPage(QWidget):
     def _fmt(self, value):
         if value is None:
             return "UNKNOWN"
+
         if isinstance(value, bool):
             return "YES" if value else "NO"
-        return str(value)
+
+        try:
+            return f"{float(value):.3f}"
+        except Exception:
+            return str(value)
 
     def _set_item(self, row, col, text, status=None):
         item = QTableWidgetItem(str(text))
@@ -323,36 +327,56 @@ class AxisStatusPage(QWidget):
         if status in ("OK", "LIVE ONLY"):
             item.setForeground(Qt.darkGreen)
 
-        elif status in ("FAULT", "NOT HOMED", "OUT OF RANGE"):
+        elif status in (
+            "FAULT",
+            "NOT HOMED",
+            "OUT OF RANGE",
+            "RUNNING/MONGO MISMATCH",
+            "PLC/MONGO MISMATCH",
+        ):
             item.setForeground(Qt.red)
 
-        elif status in ("DISABLED", "UNKNOWN"):
+        elif status in (
+            "DISABLED",
+            "UNKNOWN",
+            "DB75 UNKNOWN",
+            "MONGO MISSING",
+            "LIVE UNKNOWN",
+        ):
             item.setForeground(Qt.darkYellow)
 
         self.table.setItem(row, col, item)
 
     def _apply_result(self, result):
-        active_sku = result.get("active_sku", "UNKNOWN")
+        loaded_recipe_number = result.get(
+            "plc_active_recipe_number",
+            result.get("loaded_recipe_number", result.get("active_recipe_number", "UNKNOWN"))
+        )
+
+        active_sku = result.get(
+            "active_sku",
+            result.get("loaded_sku", "UNKNOWN")
+        )
+
+        recipe_version = result.get(
+            "recipe_version",
+            result.get("loaded_recipe_version", "-")
+        )
+
+        plc_written = result.get("plc_written")
+        plc_verified = result.get("plc_verified")
+
         sku_message = result.get("sku_message", "-")
         recipe_status = result.get("recipe_status", "UNKNOWN")
         overall_ok = bool(result.get("overall_ok", False))
-        axes = result.get("axes", [])
+        targets = result.get("targets", [])
 
-        sku_info = result.get("sku_info", {})
-        plc_raw_value = sku_info.get("plc_raw_value", None)
-
-        self.active_sku_value_lbl.setText(str(active_sku))
-
-        if plc_raw_value not in (None, "", "UNKNOWN"):
-            self.active_sku_lbl.setText(
-                f"PLC Active SKU: {active_sku} | Raw PLC Value: {plc_raw_value}"
-            )
-        else:
-            self.active_sku_lbl.setText(
-                f"PLC Active SKU: {active_sku}"
-            )
-
-        self.recipe_status_lbl.setText(f"MongoDB Recipe: {recipe_status}")
+        self.loaded_recipe_no_lbl.setText(str(loaded_recipe_number))
+        self.active_sku_lbl.setText(
+            f"SKU: {active_sku} | Version: {recipe_version} | "
+            f"PLC Written: {plc_written} | PLC Verified: {plc_verified}"
+        )
+        self.recipe_status_lbl.setText(f"MongoDB State: {recipe_status}")
         self.status_msg_lbl.setText(f"Status: {sku_message}")
 
         if overall_ok:
@@ -378,19 +402,30 @@ class AxisStatusPage(QWidget):
                 }
             """)
 
-        self.table.setRowCount(max(12, len(axes)))
+        self.table.setRowCount(max(37, len(targets)))
 
-        for row, axis in enumerate(axes):
-            status = axis.get("status", "UNKNOWN")
+        for row, target in enumerate(targets):
+            status = target.get("status", "UNKNOWN")
 
-            self._set_item(row, 0, axis.get("name", f"Axis {row + 1}"), status)
-            self._set_item(row, 1, self._fmt(axis.get("current_position")), status)
-            self._set_item(row, 2, self._fmt(axis.get("recipe_position")), status)
-            self._set_item(row, 3, self._fmt(axis.get("tolerance")), status)
-            self._set_item(row, 4, self._fmt(axis.get("enabled")), status)
-            self._set_item(row, 5, self._fmt(axis.get("homed")), status)
-            self._set_item(row, 6, self._fmt(axis.get("fault")), status)
-            self._set_item(row, 7, status, status)
+            group = str(target.get("group", "-")).upper()
+            axis_name = target.get("axis_name", f"Axis {target.get('axis_id', '-')}")
+
+            running_db75 = target.get("running_db75", target.get("active_db75"))
+
+            self._set_item(row, 0, group, status)
+            self._set_item(row, 1, axis_name, status)
+            self._set_item(row, 2, target.get("position", "-"), status)
+            self._set_item(row, 3, self._fmt(target.get("live_db74")), status)
+            self._set_item(row, 4, self._fmt(running_db75), status)
+            self._set_item(row, 5, self._fmt(target.get("mongo_target")), status)
+            self._set_item(row, 6, self._fmt(target.get("enabled")), status)
+            self._set_item(row, 7, self._fmt(target.get("homed")), status)
+            self._set_item(row, 8, self._fmt(target.get("fault")), status)
+            self._set_item(row, 9, status, status)
+
+        for row in range(len(targets), self.table.rowCount()):
+            for col in range(self.table.columnCount()):
+                self._set_item(row, col, "", None)
 
         self.status_msg_lbl.setText(f"Status: {sku_message}")
         self._resize_table_columns()
@@ -406,7 +441,6 @@ class AxisStatusPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-
         self.start_refresh()
         QTimer.singleShot(100, self._resize_table_columns)
 

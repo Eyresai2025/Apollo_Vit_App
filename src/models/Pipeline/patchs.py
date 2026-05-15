@@ -1,91 +1,139 @@
-import glob
-import cv2
 import os
-import os.path as osp
-import numpy as np
- 
- 
-def patchify_index_grouped(source_path, patch_h, patch_w,
-                           step_h=None, step_w=None, cover_edges=False):
+import shutil
+from pathlib import Path
 
-    if osp.isdir(source_path):
-        base_out = osp.join(source_path, "patches_rtor")
-    else:
-        base_out = osp.join(osp.dirname(source_path), "patches_rtor")
+import cv2
 
-    os.makedirs(base_out, exist_ok=True)
 
-    if osp.isfile(source_path):
-        image_files = [source_path]
-    else:
-        image_files = sorted(
-            glob.glob(osp.join(source_path, "*.jpg")) +
-            glob.glob(osp.join(source_path, "*.jpeg")) +
-            glob.glob(osp.join(source_path, "*.png"))
+VALID_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
+
+
+def _list_images(folder_path):
+    if not os.path.isdir(folder_path):
+        raise FileNotFoundError(f"Image folder not found: {folder_path}")
+
+    paths = []
+
+    for name in sorted(os.listdir(folder_path)):
+        full_path = os.path.join(folder_path, name)
+
+        if os.path.isfile(full_path) and name.lower().endswith(VALID_EXTS):
+            paths.append(full_path)
+
+    return paths
+
+
+def _positions(length, patch_size, step, cover_edges=True):
+    """
+    Returns start positions along one axis.
+    If cover_edges=True, adds the last possible position so image edge is covered.
+    """
+    if length <= patch_size:
+        return [0]
+
+    positions = list(range(0, length - patch_size + 1, step))
+
+    if cover_edges:
+        last_pos = length - patch_size
+        if positions[-1] != last_pos:
+            positions.append(last_pos)
+
+    return positions
+
+
+def patchify_index_grouped(
+    input_dir,
+    patch_h=200,
+    patch_w=200,
+    step_h=200,
+    step_w=200,
+    cover_edges=True,
+    output_dir=None,
+):
+    """
+    Patchifies images inside input_dir.
+
+    Expected usage from inference files:
+        patches_dir = patchify_index_grouped(
+            single_crop_dir,
+            patch_h=BIG_PATCH_H,
+            patch_w=BIG_PATCH_W,
+            step_h=BIG_STEP_H,
+            step_w=BIG_STEP_W,
+            cover_edges=COVER_EDGES,
         )
 
-    if len(image_files) == 0:
-        print("❌ No images found!")
-        return None
+    Output:
+        input_dir/patches_rtor/
+            p__r000_c000.png
+            p__r000_c001.png
+            ...
 
-    for file_path in image_files:
-        print(f"Patching: {file_path}")
+    Returns:
+        patches_dir
+    """
 
-        img = cv2.imread(file_path)
+    input_dir = str(input_dir)
+
+    if output_dir is None:
+        output_dir = os.path.join(input_dir, "patches_rtor")
+
+    output_dir = str(output_dir)
+
+    if os.path.isdir(output_dir):
+        shutil.rmtree(output_dir)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    image_paths = _list_images(input_dir)
+
+    if not image_paths:
+        raise RuntimeError(f"No images found to patchify in: {input_dir}")
+
+    patch_count = 0
+
+    for img_path in image_paths:
+        img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+
         if img is None:
-            print(f"⚠️ Could not read image: {file_path}")
+            print(f"[PATCH][WARN] Cannot read image: {img_path}")
             continue
 
-        H, W = img.shape[:2]
+        h, w = img.shape[:2]
 
-        if H < patch_h or W < patch_w:
-            print(f"⚠️ Skipping small image (H{H} x W{W})")
-            continue
+        y_positions = _positions(
+            length=h,
+            patch_size=patch_h,
+            step=step_h,
+            cover_edges=cover_edges,
+        )
 
-        sh = patch_h if step_h is None else step_h
-        sw = patch_w if step_w is None else step_w
+        x_positions = _positions(
+            length=w,
+            patch_size=patch_w,
+            step=step_w,
+            cover_edges=cover_edges,
+        )
 
-        filename_base, ext = osp.splitext(osp.basename(file_path))
-        ext = ext.lower()
+        for r, y in enumerate(y_positions):
+            for c, x in enumerate(x_positions):
+                patch = img[y:y + patch_h, x:x + patch_w]
 
-        if not cover_edges:
-            i_starts = list(range(0, H - patch_h + 1, sh))
-            j_starts = list(range(0, W - patch_w + 1, sw))
-        else:
-            i_starts = list(range(0, H - patch_h + 1, sh))
-            j_starts = list(range(0, W - patch_w + 1, sw))
+                if patch.shape[0] != patch_h or patch.shape[1] != patch_w:
+                    continue
 
-            if i_starts[-1] != H - patch_h:
-                i_starts.append(H - patch_h)
+                patch_name = f"p__r{r:03d}_c{c:03d}.png"
+                patch_path = os.path.join(output_dir, patch_name)
 
-            if j_starts[-1] != W - patch_w:
-                j_starts.append(W - patch_w)
+                cv2.imwrite(patch_path, patch)
+                patch_count += 1
 
-        for r, i0 in enumerate(i_starts):
-            for c, j0 in enumerate(j_starts):
-                patch_img = img[i0:i0 + patch_h, j0:j0 + patch_w]
+    if patch_count == 0:
+        raise RuntimeError(
+            f"No patches created from {input_dir}. "
+            f"Check image size and patch size."
+        )
 
-                out_name = f"{filename_base}__r{r:03d}_c{c:03d}{ext}"
-                out_path = osp.join(base_out, out_name)
-                cv2.imwrite(out_path, patch_img)
+    print(f"[PATCH] Created {patch_count} patches -> {output_dir}")
 
-    print("\n✅ Done! Patches saved in:")
-    print(base_out)
-    return base_out
- 
-# ==============================
-# RUN SCRIPT
-# ==============================
-if __name__ == "__main__":
- 
-    source_path = r"C:\Users\eyres\Downloads\Dataset_Ceat\_tmp_strips\test"
- 
-    patchify_index_grouped(
-        source_path,
-        patch_h=200,
-        patch_w=200,
-        step_h=200,
-        step_w=200,
-        cover_edges=True   # Recommended
-    )
- 
+    return output_dir

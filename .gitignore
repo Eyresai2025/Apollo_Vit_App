@@ -1,11 +1,12 @@
 __pycache__/
 media/weights
-media/calibration
+media/AI_Calibration_Files
 media/capture
 media/new_sku_images
 media/output
 media/Reports
 media/TestMode Reports
+media/recipe_backups
 .vscode
 graphs_output
 Apollo_env

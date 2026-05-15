@@ -1,21 +1,28 @@
 # src/COMMON/axis_status_service.py
 
-import os
 import struct
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from bson import ObjectId  # type: ignore
+from src.COMMON.recipe_tag_map import RECIPE_TARGETS
 from src.COMMON.db import get_collection
+
 
 class AxisStatusService:
     """
     Read-only Axis Status service.
 
-    Production rules:
-    - Does NOT reconnect PLC.
-    - Does NOT write to PLC.
-    - Does NOT move / jog / home / reset any axis.
-    - Uses existing PLC client from full_hardware_check.py.
-    - Shows UNKNOWN when DB addresses are not configured or PLC is unavailable.
+    Current production-safe flow WITHOUT PLC active SKU tag:
+    - DB74 = live actual machine values/status.
+    - DB75.DBD0 to DB75.DBD284 = current/running servo recipe values.
+    - MongoDB Active Recipe = last recipe this application loaded to PLC.
+    - MongoDB SKU Recipes = full saved recipe values.
+
+    Important:
+    - DB75.DBW288 is NOT active recipe read tag.
+    - DB75.DBW288 is recipe number ENTRY/WRITE tag.
+    - This service does NOT write anything to PLC.
     """
 
     def __init__(self, media_path: str, env_path: Optional[str] = None):
@@ -25,20 +32,23 @@ class AxisStatusService:
 
         self.deployment = self.env.get("DEPLOYMENT", "False")
         self.refresh_ms = self._env_int("AXIS_STATUS_REFRESH_MS", 1000)
-        self.plc_sku_list_enabled = self.env.get("PLC_SKU_LIST_ENABLED", "False").strip().lower() in ("1", "true", "yes", "on")
-        self.plc_sku_list_db = self._env_int("PLC_SKU_LIST_DB", 100)
-        self.plc_sku_list_start_byte = self._env_int("PLC_SKU_LIST_START_BYTE", 20)
-        self.plc_sku_list_count = self._env_int("PLC_SKU_LIST_COUNT", 10)
-        self.plc_sku_list_item_size = self._env_int("PLC_SKU_LIST_ITEM_SIZE", 2)
-        self.plc_sku_list_type = self.env.get("PLC_SKU_LIST_TYPE", "WORD").strip().upper()
-        # PLC = read SKU from PLC, GUI = use dropdown/manual SKU
-        self.deployment
 
-        self.plc_sku_db = self._env_int("PLC_SKU_DB", 100)
-        self.plc_sku_byte = self._env_int("PLC_SKU_BYTE", 10)
-        self.plc_sku_size = self._env_int("PLC_SKU_SIZE", 2)
-        self.plc_sku_type = self.env.get("PLC_SKU_TYPE", "WORD").strip().upper()
         self.recipe_col = get_collection("SKU Recipes")
+        self.active_recipe_col = get_collection("Active Recipe")
+        # PLC active running recipe number.
+        # PLC confirmed this tag is working.
+        self.active_recipe_db = self._env_int("PLC_ACTIVE_RECIPE_DB", 74)
+        self.active_recipe_byte = self._env_int("PLC_ACTIVE_RECIPE_BYTE", 78)
+        self.active_recipe_type = self._env_str("PLC_ACTIVE_RECIPE_TYPE", "INT").upper()
+        # DB75 running servo recipe values config.
+        # Do NOT read DB75.DBW288 here.
+        self.running_recipe_db = self._env_int("ACTIVE_RECIPE_DB", 75)
+        self.running_recipe_value_type = self._env_str("ACTIVE_RECIPE_VALUE_TYPE", "REAL").upper()
+        self.running_recipe_axis_block_bytes = self._env_int("ACTIVE_RECIPE_AXIS_BLOCK_BYTES", 24)
+        self.running_recipe_work1_offset = self._env_int("ACTIVE_RECIPE_WORK1_OFFSET", 4)
+        self.running_recipe_work2_offset = self._env_int("ACTIVE_RECIPE_WORK2_OFFSET", 8)
+        self.running_recipe_tolerance = self._env_float("ACTIVE_RECIPE_TOLERANCE", 1.0)
+
     # ------------------------------------------------------------
     # ENV
     # ------------------------------------------------------------
@@ -50,8 +60,10 @@ class AxisStatusService:
                 with open(env_path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
+
                         if not line or line.startswith("#") or "=" not in line:
                             continue
+
                         key, val = line.split("=", 1)
                         data[key.strip()] = val.strip().strip('"').strip("'")
         except Exception:
@@ -63,7 +75,7 @@ class AxisStatusService:
         val = self.env.get(key, "")
         if val is None or str(val).strip() == "":
             return default
-        return str(val).strip()
+        return str(val).strip().strip('"').strip("'")
 
     def _env_int(self, key: str, default: int) -> int:
         try:
@@ -82,7 +94,7 @@ class AxisStatusService:
             return float(str(val).strip())
         except Exception:
             return float(default)
-        
+
     def _env_float_optional(self, key: str):
         try:
             val = self.env.get(key, "")
@@ -91,6 +103,7 @@ class AxisStatusService:
             return float(str(val).strip())
         except Exception:
             return None
+
     # ------------------------------------------------------------
     # HARDWARE STATE
     # ------------------------------------------------------------
@@ -116,22 +129,27 @@ class AxisStatusService:
     def _read_bytes(self, client, db: int, byte: int, size: int):
         if client is None:
             return None
-        return client.db_read(db, byte, size)
+
+        try:
+            return client.db_read(int(db), int(byte), int(size))
+        except Exception:
+            return None
 
     def _read_bool(self, client, db: int, byte: int, bit: int):
         try:
             data = self._read_bytes(client, db, byte, 1)
             if data is None or len(data) < 1:
                 return None
-            return bool(data[0] & (1 << bit))
+
+            return bool(data[0] & (1 << int(bit)))
         except Exception:
             return None
 
     def _read_number(self, client, db: int, byte: int, dtype: str):
         """
-        Siemens data is big-endian.
+        Siemens values are big-endian.
         Supported dtype:
-        REAL, DINT, INT, WORD, BYTE
+            REAL, DINT, INT, WORD, BYTE
         """
         dtype = str(dtype or "REAL").strip().upper()
 
@@ -171,253 +189,23 @@ class AxisStatusService:
         except Exception:
             return None
 
-    def _read_string(self, client, db: int, byte: int, size: int):
-        """
-        Supports simple ASCII string area.
-        If PLC uses Siemens STRING format with max/current length bytes,
-        this still tries to extract readable content safely.
-        """
-        try:
-            data = self._read_bytes(client, db, byte, size)
-            if data is None:
-                return None
-
-            raw = bytes(data)
-
-            # Try Siemens STRING format: byte0=max_len, byte1=current_len
-            if len(raw) >= 2 and raw[1] <= len(raw) - 2 and raw[1] > 0:
-                possible = raw[2:2 + raw[1]].decode("ascii", errors="ignore").strip("\x00 ").strip()
-                if possible:
-                    return possible
-
-            # Fallback plain ASCII
-            return raw.decode("ascii", errors="ignore").strip("\x00 ").strip() or None
-
-        except Exception:
-            return None
-
     # ------------------------------------------------------------
-    # SKU
+    # AXIS CONFIG FROM .env
     # ------------------------------------------------------------
-    def get_available_skus(self) -> List[str]:
-        """
-        Axis Status SKU list rule:
-
-        DEPLOYMENT=True:
-            Try to read all available SKUs from PLC SKU list DB.
-            If PLC list is not available, fallback to .env SKU_ID_* mappings.
-
-        DEPLOYMENT=False:
-            Load SKU list from .env SKU_ID_* mappings.
-        """
-        if str(self.deployment) == "True":
-            plc_skus = self._read_sku_list_from_plc()
-            if plc_skus:
-                return plc_skus
-
-        return self._get_skus_from_env_mapping()
-    def _get_skus_from_env_mapping(self) -> List[str]:
-        sku_names = set()
-
-        for key, value in self.env.items():
-            if key.startswith("SKU_ID_"):
-                value = str(value).strip()
-                if value:
-                    sku_names.add(value)
-
-        return sorted(sku_names)
-
-
-    def _read_sku_list_from_plc(self) -> List[str]:
-        """
-        Reads all available SKU IDs/names from PLC DB list.
-
-        Example WORD list:
-            DB100.DBW20 = 1 -> SKU_001
-            DB100.DBW22 = 2 -> SKU_002
-            DB100.DBW24 = 3 -> SKU_003
-        """
-        if not self.plc_sku_list_enabled:
-            return []
-
-        client = self._get_plc_client()
-
-        if client is None:
-            return []
-
-        skus = []
-
-        try:
-            for i in range(self.plc_sku_list_count):
-                byte_offset = self.plc_sku_list_start_byte + (i * self.plc_sku_list_item_size)
-
-                if self.plc_sku_list_type == "STRING":
-                    raw_value = self._read_string(
-                        client,
-                        self.plc_sku_list_db,
-                        byte_offset,
-                        self.plc_sku_list_item_size,
-                    )
-                else:
-                    raw_value = self._read_number(
-                        client,
-                        self.plc_sku_list_db,
-                        byte_offset,
-                        self.plc_sku_list_type,
-                    )
-
-                if raw_value in (None, "", 0):
-                    continue
-
-                if self.plc_sku_list_type == "STRING":
-                    sku_name = str(raw_value).strip()
-                else:
-                    sku_name = self._map_sku_id_to_name(raw_value)
-
-                if sku_name and sku_name != "UNKNOWN":
-                    skus.append(sku_name)
-
-        except Exception as e:
-            print(f"[AXIS][SKU LIST][ERROR] Failed to read PLC SKU list: {e}")
-            return []
-
-        # remove duplicates, keep order
-        seen = set()
-        final_skus = []
-        for sku in skus:
-            if sku not in seen:
-                seen.add(sku)
-                final_skus.append(sku)
-
-        return final_skus
-
-    def _map_sku_id_to_name(self, sku_id: Any) -> str:
-        key = f"SKU_ID_{sku_id}"
-        mapped = self.env.get(key, "").strip()
-
-        if mapped:
-            return mapped
-
-        # fallback
-        return f"SKU_{sku_id}"
-
-    def _read_sku_from_plc(self, client):
-        if client is None:
-            return {
-                "sku_name": "UNKNOWN",
-                "source": "PLC",
-                "raw_value": None,
-                "message": "PLC client not available",
-            }
-
-        try:
-            if self.plc_sku_type == "STRING":
-                value = self._read_string(
-                    client,
-                    self.plc_sku_db,
-                    self.plc_sku_byte,
-                    self.plc_sku_size,
-                )
-                return {
-                    "sku_name": value or "UNKNOWN",
-                    "source": "PLC",
-                    "raw_value": value,
-                    "message": "Read PLC SKU string" if value else "PLC SKU string empty/invalid",
-                }
-
-            raw_id = self._read_number(
-                client,
-                self.plc_sku_db,
-                self.plc_sku_byte,
-                self.plc_sku_type,
-            )
-
-            if raw_id is None:
-                return {
-                    "sku_name": "UNKNOWN",
-                    "source": "PLC",
-                    "raw_value": None,
-                    "message": "PLC SKU ID read failed",
-                }
-
-            sku_name = self._map_sku_id_to_name(raw_id)
-
-            return {
-                "sku_name": sku_name,
-                "source": "PLC",
-                "raw_value": raw_id,
-                "message": f"Read PLC SKU ID {raw_id}",
-            }
-
-        except Exception as e:
-            return {
-                "sku_name": "UNKNOWN",
-                "source": "PLC",
-                "raw_value": None,
-                "message": f"PLC SKU read error: {e}",
-            }
-
-    def _resolve_active_sku(self, selected_sku: Optional[str], client):
-        """
-        Axis Status SKU rule:
-
-        DEPLOYMENT=True:
-            - Always read active SKU / recipe from PLC.
-            - No GUI dropdown override.
-            - Axis Status page shows only current live PLC recipe.
-
-        DEPLOYMENT=False:
-            - Use first .env SKU_ID_* mapping for demo/testing.
-        """
-
-        if str(self.deployment) == "True":
-            plc_info = self._read_sku_from_plc(client)
-            plc_sku = plc_info.get("sku_name", "UNKNOWN")
-
-            return {
-                **plc_info,
-                "plc_sku_name": plc_sku,
-                "plc_raw_value": plc_info.get("raw_value"),
-                "message": plc_info.get("message", "Read active SKU from PLC"),
-            }
-
-        # Demo mode only
-        skus = self.get_available_skus()
-
-        if skus:
-            return {
-                "sku_name": skus[0],
-                "source": "ENV_DEFAULT",
-                "raw_value": skus[0],
-                "message": f"Demo mode: using first .env SKU {skus[0]}.",
-                "plc_sku_name": "UNKNOWN",
-                "plc_raw_value": None,
-            }
+    def _axis_cfg(self, axis_id: int) -> Dict[str, Any]:
+        p = f"AXIS_{axis_id}_"
 
         return {
-            "sku_name": "UNKNOWN",
-            "source": "ENV",
-            "raw_value": None,
-            "message": "No SKU found.",
-            "plc_sku_name": "UNKNOWN",
-            "plc_raw_value": None,
-        }
+            "axis_id": axis_id,
+            "axis_key": f"axis_{axis_id:02d}",
+            "name": self._env_str(p + "NAME", f"Axis {axis_id}"),
 
-    # ------------------------------------------------------------
-    # AXIS CONFIG
-    # ------------------------------------------------------------
-    def _axis_cfg(self, index: int) -> Dict[str, Any]:
-        p = f"AXIS_{index}_"
-
-        return {
-            "index": index,
-            "axis_key": f"axis_{index:02d}",
-            "name": self._env_str(p + "NAME", f"Axis {index}"),
-
+            # DB74 live position
             "pos_db": self._env_int(p + "POS_DB", 0),
             "pos_byte": self._env_int(p + "POS_BYTE", 0),
             "pos_type": self._env_str(p + "POS_TYPE", "REAL").upper(),
 
+            # DB74 enabled/fault/home bits
             "enabled_configured": (p + "ENABLED_DB") in self.env,
             "enabled_db": self._env_int(p + "ENABLED_DB", 0),
             "enabled_byte": self._env_int(p + "ENABLED_BYTE", 0),
@@ -433,69 +221,19 @@ class AxisStatusService:
             "fault_byte": self._env_int(p + "FAULT_BYTE", 0),
             "fault_bit": self._env_int(p + "FAULT_BIT", 0),
 
-            "alarm_configured": (p + "ALARM_DB") in self.env,
-            "alarm_db": self._env_int(p + "ALARM_DB", 0),
-            "alarm_byte": self._env_int(p + "ALARM_BYTE", 0),
-            "alarm_size": self._env_int(p + "ALARM_SIZE", 2),
-            "alarm_type": self._env_str(p + "ALARM_TYPE", "WORD").upper(),
-
-            "recipe_pos": self._env_float_optional(p + "RECIPE_POS"),
-            "tolerance": self._env_float(p + "TOLERANCE", 1.0),
+            "tolerance": self._env_float(p + "TOLERANCE", self.running_recipe_tolerance),
         }
-    
-    def _get_latest_recipe(self, sku_name: Optional[str]):
-        if not sku_name or sku_name == "UNKNOWN":
-            return None
 
-        try:
-            return self.recipe_col.find_one(
-                {
-                    "type": "sku_recipe",
-                    "sku_name": sku_name,
-                },
-                sort=[("version", -1)]
-            )
-        except Exception:
-            return None
+    def _read_axis_live_state(self, client, axis_id: int) -> Dict[str, Any]:
+        cfg = self._axis_cfg(axis_id)
 
-
-    def _get_recipe_axis_position(self, recipe, axis_key: str):
-        if not recipe:
-            return None
-
-        camera_targets = recipe.get("camera_axis_targets", {}) or {}
-        laser_targets = recipe.get("laser_axis_targets", {}) or {}
-
-        raw = None
-
-        if axis_key in camera_targets:
-            raw = camera_targets.get(axis_key)
-        elif axis_key in laser_targets:
-            raw = laser_targets.get(axis_key)
-
-        if isinstance(raw, dict):
-            raw = raw.get("value")
-
-        try:
-            if raw is None or raw == "":
-                return None
-            return float(raw)
-        except Exception:
-            return None
-        
-    def _read_axis(self, client, cfg: Dict[str, Any], recipe_position=None) -> Dict[str, Any]:
         position = None
         enabled = None
         homed = None
         fault = None
-        alarm = None
-
-        read_message = "-"
 
         if str(self.deployment) == "True":
-            if client is None:
-                read_message = "PLC client not available"
-            else:
+            if client is not None:
                 position = self._read_number(
                     client,
                     cfg["pos_db"],
@@ -526,148 +264,561 @@ class AxisStatusService:
                         cfg["fault_byte"],
                         cfg["fault_bit"],
                     )
-
-                if cfg.get("alarm_configured"):
-                    alarm = self._read_number(
-                        client,
-                        cfg["alarm_db"],
-                        cfg["alarm_byte"],
-                        cfg["alarm_type"],
-                    )
-
-                read_message = "PLC read attempted"
         else:
-            position = cfg["recipe_pos"]
+            # Demo values
+            position = self._env_float_optional(f"AXIS_{axis_id}_RECIPE_POS")
             enabled = True
             homed = True
             fault = False
-            alarm = 0
-            read_message = "DEPLOYMENT=False demo values"
-
-        final_recipe_pos = recipe_position
-        if final_recipe_pos is None:
-            final_recipe_pos = cfg.get("recipe_pos")
-
-        status = self._calculate_axis_status(
-            position=position,
-            recipe_pos=final_recipe_pos,
-            tolerance=cfg["tolerance"],
-            enabled=enabled,
-            homed=homed,
-            fault=fault,
-        )
 
         return {
-            "index": cfg["index"],
-            "name": cfg["name"],
-
-            "current_position": position,
-            "recipe_position": final_recipe_pos,
-            "tolerance": cfg["tolerance"],
-
+            "axis_id": axis_id,
+            "axis_key": cfg["axis_key"],
+            "axis_name": cfg["name"],
+            "live_position": position,
             "enabled": enabled,
             "homed": homed,
             "fault": fault,
-
-            "status": status,
-            "message": read_message,
-
-            "address_info": {
-                "position": f'DB{cfg["pos_db"]}.DBB{cfg["pos_byte"]} ({cfg["pos_type"]})',
-                "enabled": f'DB{cfg["enabled_db"]}.DBX{cfg["enabled_byte"]}.{cfg["enabled_bit"]}' if cfg.get("enabled_configured") else "NOT CONFIGURED",
-                "homed": f'DB{cfg["homed_db"]}.DBX{cfg["homed_byte"]}.{cfg["homed_bit"]}' if cfg.get("homed_configured") else "NOT CONFIGURED",
-                "fault": f'DB{cfg["fault_db"]}.DBX{cfg["fault_byte"]}.{cfg["fault_bit"]}' if cfg.get("fault_configured") else "NOT CONFIGURED",
-            },
+            "tolerance": cfg["tolerance"],
+            "db74_address": f'DB{cfg["pos_db"]}.DBD{cfg["pos_byte"]}',
         }
 
-    def _calculate_axis_status(
+    # ------------------------------------------------------------
+    # RECIPE TARGET CONFIG FROM .env
+    # ------------------------------------------------------------
+    def _recipe_target_configs(self) -> List[Dict[str, Any]]:
+        """
+        Load recipe target config from central recipe_tag_map.py.
+
+        This supports:
+            HOME
+            WORK 1
+            WORK 2
+            WORK 3
+            WORK 4
+            SAFE
+
+        Instead of only old 17 target rows.
+        """
+        targets: List[Dict[str, Any]] = []
+
+        for idx, item in enumerate(RECIPE_TARGETS, start=1):
+            axis_id = int(item.get("axis_id", 0))
+
+            if axis_id <= 0:
+                continue
+
+            targets.append({
+                "target_index": idx,
+                "target_key": item["key"],
+                "legacy_key": item.get("legacy_key"),
+
+                "target_name": f"{item.get('sd', '')} {item.get('description', '')}".strip(),
+                "group": str(item.get("group", "MACHINE")).upper(),
+                "position": item.get("position", "-"),
+
+                "axis_id": axis_id,
+                "axis_key": f"axis_{axis_id:02d}",
+                "type": item.get("db75_type", "REAL").upper(),
+
+                "db75_read_db": int(item.get("db75_db", self.running_recipe_db)),
+                "db75_read_byte": int(item.get("db75_byte", -1)),
+                "db75_type": item.get("db75_type", "REAL").upper(),
+
+                "db53_write_db": int(item.get("db53_db", 53)),
+                "db53_write_byte": int(item.get("db53_byte", -1)),
+                "db53_type": item.get("db53_type", "REAL").upper(),
+            })
+
+        return targets
+
+    # ------------------------------------------------------------
+    # DB75 RUNNING SERVO VALUES READ
+    # ------------------------------------------------------------
+    def _db75_byte_for_target(self, axis_id: int, group: str) -> int:
+        """
+        DB75 layout:
+            each axis block = 24 bytes
+            HOME   = base + 0
+            WORK 1 = base + 4
+            WORK 2 = base + 8
+            WORK 3 = base + 12
+            WORK 4 = base + 16
+            SAFE   = base + 20
+
+        Rule used by current recipe targets:
+            MACHINE/CAMERA = WORK 1
+            LASER          = WORK 2
+        """
+        base = (int(axis_id) - 1) * int(self.running_recipe_axis_block_bytes)
+
+        if str(group).upper() == "LASER":
+            return base + int(self.running_recipe_work2_offset)
+
+        return base + int(self.running_recipe_work1_offset)
+
+    def _read_db75_running_value(self, client, target_cfg: Dict[str, Any]):
+        """
+        Read active/running recipe value from explicit DB75 address.
+
+        DB75 byte comes from recipe_tag_map.py.
+        No more MACHINE/CAMERA=WORK1 and LASER=WORK2 assumption.
+        """
+        if str(self.deployment) != "True":
+            return None, ""
+
+        if client is None:
+            return None, ""
+
+        db = int(target_cfg.get("db75_read_db", self.running_recipe_db))
+        byte = int(target_cfg.get("db75_read_byte", -1))
+        dtype = str(target_cfg.get("db75_type", "REAL")).upper()
+
+        if byte < 0:
+            return None, ""
+
+        value = self._read_number(
+            client,
+            db,
+            byte,
+            dtype,
+        )
+
+        if dtype == "REAL":
+            address = f"DB{db}.DBD{byte}"
+        else:
+            address = f"DB{db}.DBW{byte}"
+
+        return value, address
+
+    # ------------------------------------------------------------
+    # MONGODB ACTIVE / LAST LOADED RECIPE
+    # ------------------------------------------------------------
+    def _get_last_loaded_recipe_state(self) -> Optional[Dict[str, Any]]:
+        """
+        Reads application-side last loaded recipe state.
+
+        This comes from Active Recipe collection:
+            type = last_loaded_recipe
+
+        This is NOT PLC active SKU.
+        It only tells which recipe the application last loaded to PLC.
+        """
+        try:
+            return self.active_recipe_col.find_one({"type": "last_loaded_recipe"})
+        except Exception:
+            return None
+
+    def _get_recipe_from_last_loaded_state(
         self,
-        position,
-        recipe_pos,
-        tolerance,
+        state: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fetch full recipe from SKU Recipes using Active Recipe pointer.
+        Preferred lookup:
+            recipe_id
+
+        Fallback:
+            sku_name + version
+            recipe_number + version/latest
+        """
+        if not state:
+            return None
+
+        recipe_id = str(state.get("recipe_id", "")).strip()
+
+        if recipe_id:
+            try:
+                recipe = self.recipe_col.find_one({"_id": ObjectId(recipe_id)})
+                if recipe:
+                    return recipe
+            except Exception:
+                pass
+
+        sku_name = str(state.get("sku_name", "")).strip()
+        recipe_version = state.get("recipe_version")
+
+        if sku_name and recipe_version not in (None, ""):
+            try:
+                recipe = self.recipe_col.find_one(
+                    {
+                        "type": "sku_recipe",
+                        "sku_name": sku_name,
+                        "version": int(recipe_version),
+                    }
+                )
+                if recipe:
+                    return recipe
+            except Exception:
+                pass
+
+        recipe_number = state.get("recipe_number") or state.get("plc_recipe_number")
+
+        if recipe_number not in (None, ""):
+            try:
+                recipe = self.recipe_col.find_one(
+                    {
+                        "type": "sku_recipe",
+                        "$or": [
+                            {"recipe_number": int(recipe_number)},
+                            {"plc_recipe_number": int(recipe_number)},
+                        ],
+                    },
+                    sort=[("version", -1)],
+                )
+                if recipe:
+                    return recipe
+            except Exception:
+                pass
+
+        return None
+
+    def _extract_target_value(self, container, key):
+        if not container or not key:
+            return None
+
+        raw = container.get(key)
+
+        if isinstance(raw, dict):
+            raw = raw.get("value")
+
+        try:
+            if raw is None or raw == "":
+                return None
+            return float(raw)
+        except Exception:
+            return None
+
+
+    def _get_mongo_target_value(self, recipe: Optional[Dict[str, Any]], target_cfg: Dict[str, Any]):
+        """
+        Reads MongoDB target value.
+
+        Priority:
+        1. New key from recipe_tag_map.py
+        2. Legacy key from old 17-target setup
+        3. Search in recipe_axis_targets
+        4. Search in camera_axis_targets
+        5. Search in laser_axis_targets
+        """
+        if not recipe:
+            return None
+
+        keys_to_try = [
+            target_cfg.get("target_key"),
+            target_cfg.get("legacy_key"),
+        ]
+
+        containers = [
+            recipe.get("recipe_axis_targets", {}) or {},
+            recipe.get("camera_axis_targets", {}) or {},
+            recipe.get("laser_axis_targets", {}) or {},
+        ]
+
+        for key in keys_to_try:
+            if not key:
+                continue
+
+            for container in containers:
+                value = self._extract_target_value(container, key)
+                if value is not None:
+                    return value
+
+        return None
+
+    # ------------------------------------------------------------
+    # COMPARISON / STATUS
+    # ------------------------------------------------------------
+    def _delta(self, a, b):
+        try:
+            if a is None or b is None:
+                return None
+            return round(float(a) - float(b), 3)
+        except Exception:
+            return None
+
+    def _abs_gt(self, value, tolerance) -> bool:
+        try:
+            if value is None:
+                return False
+            return abs(float(value)) > float(tolerance)
+        except Exception:
+            return False
+
+    def _calculate_status(
+        self,
+        live_position,
+        running_db75_value,
+        mongo_value,
         enabled,
         homed,
         fault,
+        tolerance,
     ) -> str:
-        if position is None:
-            return "UNKNOWN"
+        """
+        Final Status rule for Axis Status page:
 
-        if fault is True:
-            return "FAULT"
+        - Current Axis Position / Enabled / Homed / Fault are displayed only.
+        - Status is calculated only by comparing:
+            Active Recipe Value from PLC DB75
+            vs
+            MongoDB saved recipe value
 
-        # If no SKU recipe target is saved yet, still show live PLC value as good live-read.
-        # Do not mark it DISABLED just because servo enable is OFF in manual/idle condition.
-        if recipe_pos is None:
-            return "LIVE ONLY"
+        Required behavior:
+            same value  -> OK
+            different   -> RUNNING/MONGO MISMATCH
+        """
 
-        if enabled is False:
-            return "DISABLED"
+        if running_db75_value is None:
+            return "DB75 UNKNOWN"
 
-        # Only check homed if PLC has given homed value.
-        if homed is False:
-            return "NOT HOMED"
+        if mongo_value is None:
+            return "MONGO MISSING"
 
-        try:
-            error = abs(float(position) - float(recipe_pos))
-            if error > float(tolerance):
-                return "OUT OF RANGE"
-        except Exception:
-            return "UNKNOWN"
+        running_mongo_delta = self._delta(running_db75_value, mongo_value)
+
+        if self._abs_gt(running_mongo_delta, tolerance):
+            return "RUNNING/MONGO MISMATCH"
 
         return "OK"
+    
+    def _read_plc_active_recipe_number(self, client):
+        """
+        Reads active running recipe number from PLC.
 
+        Confirmed by PLC test:
+            DB74.DBW78 INT
+        """
+        if str(self.deployment) != "True":
+            return None
+
+        if client is None:
+            return None
+
+        return self._read_number(
+            client,
+            self.active_recipe_db,
+            self.active_recipe_byte,
+            self.active_recipe_type,
+        )
+    
+    def _get_recipe_by_plc_active_number(self, recipe_number):
+        """
+        Fetch MongoDB recipe using PLC active running recipe number.
+
+        PLC active recipe:
+            DB74.DBW78 INT
+
+        MongoDB expected fields:
+            recipe_number or plc_recipe_number
+        """
+        if recipe_number in (None, "", "UNKNOWN"):
+            return None
+
+        try:
+            return self.recipe_col.find_one(
+                {
+                    "type": "sku_recipe",
+                    "$or": [
+                        {"recipe_number": int(recipe_number)},
+                        {"plc_recipe_number": int(recipe_number)},
+                    ],
+                },
+                sort=[("version", -1)],
+            )
+        except Exception:
+            return None
     # ------------------------------------------------------------
     # MAIN
     # ------------------------------------------------------------
     def get_axis_status(self, selected_sku: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Axis Status comparison flow.
+
+        Production rule:
+            - PLC active recipe number from DB74.DBW78 is the source of truth.
+            - Axis Status must not show last_loaded_recipe as active recipe.
+            - last_loaded_recipe is only used for PLC Written / PLC Verified display
+            if it matches the same PLC active recipe number.
+        """
         client = self._get_plc_client()
 
-        # selected_sku is ignored in production.
-        # Axis Status page must always use PLC active SKU.
-        sku_info = self._resolve_active_sku(selected_sku, client)
+        plc_active_recipe_number = self._read_plc_active_recipe_number(client)
 
-        active_sku = sku_info.get("sku_name", "UNKNOWN")
-        recipe = self._get_latest_recipe(active_sku)
+        last_loaded_state = self._get_last_loaded_recipe_state()
 
-        axes = []
+        # Source of truth: PLC active recipe number
+        recipe = self._get_recipe_by_plc_active_number(plc_active_recipe_number)
 
-        for i in range(1, 13):
-            cfg = self._axis_cfg(i)
+        plc_written = None
+        plc_verified = None
 
-            recipe_position = self._get_recipe_axis_position(
-                recipe,
-                cfg["axis_key"],
-            )
+        if recipe:
+            loaded_recipe_number = plc_active_recipe_number
+            loaded_sku = recipe.get("sku_name", "UNKNOWN")
+            loaded_version = recipe.get("version", "-")
+            active_sku = loaded_sku
+            recipe_version = loaded_version
+            recipe_status = "FOUND FROM PLC ACTIVE RECIPE"
 
-            axes.append(
-                self._read_axis(
-                    client,
-                    cfg,
-                    recipe_position=recipe_position,
+            # Show written/verified only if last loaded recipe matches PLC active recipe.
+            if last_loaded_state:
+                state_recipe_no = (
+                    last_loaded_state.get("recipe_number")
+                    or last_loaded_state.get("plc_recipe_number")
                 )
+
+                try:
+                    if int(state_recipe_no) == int(plc_active_recipe_number):
+                        plc_written = last_loaded_state.get("plc_written")
+                        plc_verified = last_loaded_state.get("plc_verified")
+                except Exception:
+                    pass
+
+        else:
+            # Do NOT fallback header to last_loaded_recipe.
+            loaded_recipe_number = plc_active_recipe_number or "UNKNOWN"
+            loaded_sku = "UNKNOWN"
+            loaded_version = "-"
+            active_sku = "UNKNOWN"
+            recipe_version = "-"
+
+            if plc_active_recipe_number in (None, "", "UNKNOWN"):
+                recipe_status = "PLC ACTIVE RECIPE UNKNOWN"
+            else:
+                recipe_status = "NOT FOUND FOR PLC ACTIVE RECIPE"
+
+            # Still show last-loaded flags only as reference if same recipe number.
+            if last_loaded_state:
+                state_recipe_no = (
+                    last_loaded_state.get("recipe_number")
+                    or last_loaded_state.get("plc_recipe_number")
+                )
+
+                try:
+                    if int(state_recipe_no) == int(plc_active_recipe_number):
+                        plc_written = last_loaded_state.get("plc_written")
+                        plc_verified = last_loaded_state.get("plc_verified")
+                except Exception:
+                    pass
+
+        rows = []
+
+        for target_cfg in self._recipe_target_configs():
+            axis_id = int(target_cfg.get("axis_id") or 0)
+
+            if axis_id <= 0:
+                continue
+
+            live_state = self._read_axis_live_state(client, axis_id)
+
+            running_value, db75_address = self._read_db75_running_value(
+                client=client,
+                target_cfg=target_cfg,
             )
 
-        recipe_found = recipe is not None
+            mongo_value = self._get_mongo_target_value(
+                recipe=recipe,
+                target_cfg=target_cfg,
+            )
 
-        if active_sku == "UNKNOWN":
-            recipe_status = "PLC ACTIVE SKU UNKNOWN"
-        elif recipe_found:
-            recipe_status = "FOUND IN MONGODB"
+            tolerance = float(live_state.get("tolerance") or self.running_recipe_tolerance)
+
+            live_running_delta = self._delta(live_state.get("live_position"), running_value)
+            running_mongo_delta = self._delta(running_value, mongo_value)
+
+            status = self._calculate_status(
+                live_position=live_state.get("live_position"),
+                running_db75_value=running_value,
+                mongo_value=mongo_value,
+                enabled=live_state.get("enabled"),
+                homed=live_state.get("homed"),
+                fault=live_state.get("fault"),
+                tolerance=tolerance,
+            )
+
+            rows.append({
+                "target_index": target_cfg["target_index"],
+                "target_key": target_cfg["target_key"],
+                "legacy_key": target_cfg.get("legacy_key"),
+                "target_name": target_cfg["target_name"],
+                "group": target_cfg["group"],
+                "position": target_cfg.get("position", "-"),
+
+                "axis_id": axis_id,
+                "axis_key": target_cfg["axis_key"],
+                "axis_name": live_state.get("axis_name"),
+
+                "live_db74": live_state.get("live_position"),
+                "running_db75": running_value,
+                "mongo_target": mongo_value,
+
+                "live_running_delta": live_running_delta,
+                "running_mongo_delta": running_mongo_delta,
+
+                "active_db75": running_value,
+                "live_active_delta": live_running_delta,
+                "active_mongo_delta": running_mongo_delta,
+
+                "tolerance": tolerance,
+
+                "enabled": live_state.get("enabled"),
+                "homed": live_state.get("homed"),
+                "fault": live_state.get("fault"),
+
+                "db74_address": live_state.get("db74_address"),
+                "db75_address": db75_address,
+                "db53_address": (
+                    f"DB{target_cfg.get('db53_write_db')}.DBD{target_cfg.get('db53_write_byte')}"
+                    if target_cfg.get("db53_write_byte", -1) >= 0
+                    else ""
+                ),
+
+                "status": status,
+            })
+
+        overall_ok = bool(rows) and all(row.get("status") in ("OK", "DISABLED") for row in rows)
+
+        if recipe:
+            sku_message = (
+                f"PLC active recipe={plc_active_recipe_number}, "
+                f"SKU={active_sku}, "
+                f"version={recipe_version}. "
+                f"MongoDB recipe status={recipe_status}."
+            )
         else:
-            recipe_status = "NOT FOUND IN MONGODB"
-
-        overall_ok = bool(recipe_found) and bool(axes) and all(
-            axis["status"] == "OK" for axis in axes
-        )
+            sku_message = (
+                f"PLC active recipe={plc_active_recipe_number}. "
+                f"MongoDB recipe status={recipe_status}. "
+                "Check whether this active recipe number exists in SKU Recipes."
+            )
 
         return {
             "deployment": self.deployment,
-            "sku_info": sku_info,
+
+            "loaded_recipe_number": loaded_recipe_number,
+            "loaded_sku": loaded_sku,
+            "loaded_recipe_version": loaded_version,
+            "plc_written": plc_written,
+            "plc_verified": plc_verified,
+
+            "active_recipe_number": loaded_recipe_number,
             "active_sku": active_sku,
-            "sku_source": sku_info.get("source", "-"),
-            "sku_message": sku_info.get("message", "-"),
+            "recipe_version": recipe_version,
+
+            "plc_active_recipe_number": plc_active_recipe_number,
+
             "recipe_status": recipe_status,
-            "recipe_found": recipe_found,
+            "recipe_found": recipe is not None,
             "overall_ok": overall_ok,
-            "axes": axes,
+            "sku_message": sku_message,
+
+            "sku_info": {
+                "plc_raw_value": plc_active_recipe_number,
+                "message": sku_message,
+                "source": "PLC DB74.DBW78 active recipe",
+            },
+
+            "targets": rows,
+            "axes": rows,
         }

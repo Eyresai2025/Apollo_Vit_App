@@ -335,12 +335,6 @@ class ComponentHealthService:
                 return result
 
             mode_text = self._decode_mode(raw_mode)
-
-            print(
-                f"[PLC MODE] Raw DB{self.plc_mode_db}.DBW{self.plc_mode_byte} = "
-                f"{raw_mode} -> {mode_text}"
-            )
-
             result["mode"] = mode_text
             result["mode_ok"] = mode_text in ("MANUAL", "AUTO", "TEACHING")
             result["text"] = f"Mode: {mode_text}"
