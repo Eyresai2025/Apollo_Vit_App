@@ -90,6 +90,14 @@ def _to_int(value: Any, default: int) -> int:
     except Exception:
         return int(default)
 
+def _to_float_or_none(value: Any):
+    try:
+        text = str(value or "").strip()
+        if text == "":
+            return None
+        return float(text)
+    except Exception:
+        return None
 
 class ImageViewerDialog(QDialog):
     def __init__(self, image_path: str, title: str = "Image Viewer", parent=None):
@@ -352,6 +360,10 @@ class NewSKUPage(QWidget):
             plc_client=self.plc_client,
         )
         self.recipe_doc: Dict[str, Any] = {}
+        self.saved_recipe_doc: Optional[Dict[str, Any]] = None
+        self.saved_recipe_result: Optional[Dict[str, Any]] = None
+        self.load_machine_btn: Optional[QPushButton] = None
+
         self.latest_training_summary: Dict[str, Any] = {}
         self.latest_validation_result: Dict[str, Any] = {}
 
@@ -560,7 +572,16 @@ class NewSKUPage(QWidget):
     def _apply_sku_meta_to_form(self):
         if not self.wizard_widgets:
             return
-        text_keys = ["sku_name", "tyre_name", "tyre_size", "barcode", "barcode_pattern", "operator"]
+        text_keys = [
+            "sku_name",
+            "tyre_name",
+            "tyre_size",
+            "tyre_outer_diameter",
+            "tyre_rpm",
+            "barcode",
+            "barcode_pattern",
+            "operator",
+        ]
         for key in text_keys:
             widget = self.wizard_widgets.get(key)
             if widget is not None:
@@ -767,6 +788,12 @@ class NewSKUPage(QWidget):
         barcode_edit = QLineEdit()
         barcode_edit.setPlaceholderText("Enter actual barcode value")
 
+        tyre_outer_diameter_edit = QLineEdit()
+        tyre_outer_diameter_edit.setPlaceholderText("Example: 600")
+
+        tyre_rpm_edit = QLineEdit()
+        tyre_rpm_edit.setPlaceholderText("Example: 2.0")
+
         barcode_pattern_edit = QLineEdit()
         barcode_pattern_edit.setPlaceholderText("Example: APOLLO-* or regex pattern")
 
@@ -795,6 +822,8 @@ class NewSKUPage(QWidget):
             "recipe_number": recipe_number_spin,
             "tyre_name": tyre_name_edit,
             "tyre_size": size_edit,
+            "tyre_outer_diameter": tyre_outer_diameter_edit,
+            "tyre_rpm": tyre_rpm_edit,
             "barcode": barcode_edit,
             "barcode_pattern": barcode_pattern_edit,
             "operator": operator_edit,
@@ -814,6 +843,8 @@ class NewSKUPage(QWidget):
         form.addRow("Recipe Number", recipe_number_spin)
         form.addRow("Tyre Name", tyre_name_edit)
         form.addRow("Tyre Size", size_edit)
+        form.addRow("Tyre Outer Diameter", tyre_outer_diameter_edit)
+        form.addRow("Tyre RPM", tyre_rpm_edit)
         form.addRow("Barcode", barcode_edit)
         form.addRow("Barcode Pattern", barcode_pattern_edit)
         form.addRow("Operator", operator_edit)
@@ -830,12 +861,16 @@ class NewSKUPage(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
+
         next_btn = self._make_button("Next: Axis Teaching", "secondary")
         next_btn.clicked.connect(lambda: self._switch_tab(TAB_AXIS_TEACHING))
-        save_btn = self._make_button("Save SKU Setup", "primary")
-        save_btn.clicked.connect(self._save_sku_setup)
+
+        save_setup_btn = self._make_button("Save SKU Setup", "primary")
+        save_setup_btn.clicked.connect(self._save_sku_setup)
+
         btn_row.addWidget(next_btn)
-        btn_row.addWidget(save_btn)
+        btn_row.addWidget(save_setup_btn)
+
         lay.addLayout(btn_row)
 
         root.addWidget(card)
@@ -846,6 +881,8 @@ class NewSKUPage(QWidget):
         recipe_number = int(self.wizard_widgets["recipe_number"].value())
         tyre_name = self.wizard_widgets["tyre_name"].text().strip()
         tyre_size = self.wizard_widgets["tyre_size"].text().strip()
+        tyre_outer_diameter_raw = self.wizard_widgets["tyre_outer_diameter"].text().strip()
+        tyre_rpm_raw = self.wizard_widgets["tyre_rpm"].text().strip()
         barcode = self.wizard_widgets["barcode"].text().strip()
         barcode_pattern = self.wizard_widgets["barcode_pattern"].text().strip()
         operator = self.wizard_widgets["operator"].text().strip()
@@ -859,7 +896,33 @@ class NewSKUPage(QWidget):
         if train_good_count >= image_count_per_zone:
             QMessageBox.warning(self, "SKU Setup", "Train Good Count must be smaller than Images per Zone.")
             return
+        tyre_outer_diameter = _to_float_or_none(tyre_outer_diameter_raw)
+        tyre_rpm = _to_float_or_none(tyre_rpm_raw)
 
+        if tyre_outer_diameter_raw and tyre_outer_diameter is None:
+            QMessageBox.warning(self, "SKU Setup", "Tyre Outer Diameter must be a valid number.")
+            return
+
+        if tyre_rpm_raw and tyre_rpm is None:
+            QMessageBox.warning(self, "SKU Setup", "Tyre RPM must be a valid number.")
+            return
+        existing_recipe = self.recipe_service.find_recipe_by_number(recipe_number)
+
+        if existing_recipe:
+            existing_sku = existing_recipe.get("sku_name", "UNKNOWN")
+            existing_version = existing_recipe.get("version", "-")
+
+            QMessageBox.warning(
+                self,
+                "Duplicate Recipe Number",
+                (
+                    f"Recipe number {recipe_number} already exists.\n\n"
+                    f"Existing SKU: {existing_sku}\n"
+                    f"Version: {existing_version}\n\n"
+                    "Please use a different recipe number."
+                )
+            )
+            return
         tyre_name = tyre_name or sku_name
         barcode = barcode or barcode_pattern
         operator = operator or "operator"
@@ -870,6 +933,8 @@ class NewSKUPage(QWidget):
             "plc_recipe_number": recipe_number,
             "tyre_name": tyre_name,
             "tyre_size": tyre_size,
+            "tyre_outer_diameter": tyre_outer_diameter,
+            "tyre_rpm": tyre_rpm,
             "barcode": barcode,
             "barcode_pattern": barcode_pattern,
             "operator": operator,
@@ -2318,13 +2383,22 @@ class NewSKUPage(QWidget):
         lay.addWidget(self.recipe_summary_lbl, 1)
 
         btn_row = QHBoxLayout()
+
         preview_btn = self._make_button("Preview Recipe", "secondary")
         preview_btn.clicked.connect(self._preview_recipe)
+
         save_btn = self._make_button("Save Recipe", "primary")
         save_btn.clicked.connect(self._save_recipe_final)
+
+        self.load_machine_btn = self._make_button("Load Recipe to Machine", "primary")
+        self.load_machine_btn.clicked.connect(self._load_saved_recipe_to_machine)
+        self.load_machine_btn.setEnabled(False)
+
         btn_row.addWidget(preview_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(save_btn)
+        btn_row.addWidget(self.load_machine_btn)
+
         lay.addLayout(btn_row)
 
         root.addWidget(card)
@@ -2412,7 +2486,24 @@ class NewSKUPage(QWidget):
     def _preview_recipe(self):
         try:
             recipe_doc = self._build_final_recipe_doc()
+            recipe_number = int(recipe_doc.get("recipe_number", 0) or 0)
+            existing_recipe = self.recipe_service.find_recipe_by_number(recipe_number)
 
+            if existing_recipe:
+                existing_sku = existing_recipe.get("sku_name", "UNKNOWN")
+                existing_version = existing_recipe.get("version", "-")
+
+                QMessageBox.warning(
+                    self,
+                    "Duplicate Recipe Number",
+                    (
+                        f"Recipe number {recipe_number} already exists.\n\n"
+                        f"Existing SKU: {existing_sku}\n"
+                        f"Version: {existing_version}\n\n"
+                        "Recipe was not saved again. Please use a different recipe number."
+                    )
+                )
+                return
             recipe_axis_targets = recipe_doc.get("recipe_axis_targets", {}) or {}
 
             machine_count = sum(
@@ -2433,6 +2524,8 @@ class NewSKUPage(QWidget):
                 f"Recipe Number: {recipe_doc.get('recipe_number')}\n"
                 f"Tyre Name: {recipe_doc.get('tyre_name')}\n"
                 f"Tyre Size: {recipe_doc.get('tyre_size')}\n"
+                f"Tyre Outer Diameter: {recipe_doc.get('tyre_outer_diameter')}\n"
+                f"Tyre RPM: {recipe_doc.get('tyre_rpm')}\n"
                 f"Barcode: {self.sku_meta.get('barcode', '')}\n"
                 f"Barcode Pattern: {recipe_doc.get('barcode_pattern')}\n"
                 f"Version: {recipe_doc.get('version')}\n"
@@ -2458,7 +2551,139 @@ class NewSKUPage(QWidget):
 
         except Exception as e:
             QMessageBox.warning(self, "Recipe Preview", str(e))
+    
+    def _load_saved_recipe_to_machine(self):
+        """
+        Load the currently saved New SKU recipe to machine.
 
+        This uses the same backend as Recipe Management:
+            RecipeService.write_recipe_to_plc()
+
+        It writes:
+            - recipe name to DB53 string tag, if enabled
+            - recipe_axis_targets to DB53
+            - recipe number to DB75.DBW288
+            - verifies DB53 read-back
+            - verifies recipe number read-back
+        """
+
+        recipe = self.saved_recipe_doc
+
+        if not recipe:
+            QMessageBox.warning(
+                self,
+                "Load Recipe to Machine",
+                "Please save the recipe first before loading it to machine."
+            )
+            return
+
+        if not recipe.get("recipe_axis_targets"):
+            QMessageBox.warning(
+                self,
+                "Load Recipe to Machine",
+                (
+                    "This recipe does not contain recipe_axis_targets.\n\n"
+                    "Please complete Axis Teaching and save recipe first."
+                )
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Load Recipe to Machine",
+            (
+                "This will write the saved recipe target values to PLC DB53, "
+                "write the recipe name if enabled, write the recipe number to DB75.DBW288, "
+                "and verify PLC read-back.\n\n"
+                "Continue?"
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            result = self.recipe_service.write_recipe_to_plc(
+                recipe_doc=recipe,
+                plc_client=self.plc_client,
+            )
+
+            msg = self._format_plc_result_message(result)
+
+            QMessageBox.information(
+                self,
+                "PLC Recipe Load",
+                msg
+            )
+
+            if self.recipe_summary_lbl is not None:
+                old_text = self.recipe_summary_lbl.text()
+                self.recipe_summary_lbl.setText(
+                    old_text + "\n\n--- Load Recipe to Machine ---\n" + msg
+                )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "PLC Recipe Load Error",
+                str(e)
+            )
+    
+    def _format_plc_result_message(self, result: Dict[str, Any]) -> str:
+        verify_result = result.get("verify_result", {}) or {}
+        recipe_name_result = result.get("recipe_name_result", {}) or {}
+        recipe_number_result = result.get("recipe_number_result", {}) or {}
+
+        plc_enabled = bool(result.get("enabled", False))
+        plc_written = bool(result.get("written", False))
+        plc_verified = bool(result.get("verified", False))
+
+        written_items = result.get("written_items", []) or []
+        skipped_items = result.get("skipped_items", []) or []
+        mismatches = (
+            result.get("mismatches", [])
+            or verify_result.get("mismatches", [])
+            or []
+        )
+
+        if not plc_enabled:
+            return (
+                "PLC Write: Disabled\n"
+                f"PLC Message: {result.get('message', '')}"
+            )
+
+        msg = (
+            f"PLC Write: {'OK' if plc_written else 'NOT OK'}\n"
+            f"PLC Verify: {'OK' if plc_verified else 'NOT OK / SKIPPED'}\n"
+            f"Recipe Name Write: {'OK' if recipe_name_result.get('written') else 'NOT OK / SKIPPED'}\n"
+            f"Recipe Number Write: {'OK' if recipe_number_result.get('written') else 'NOT OK / SKIPPED'}\n"
+            f"Recipe Number Verify: {'OK' if recipe_number_result.get('verified') else 'NOT OK / SKIPPED'}\n"
+            f"Targets Written: {len(written_items)}\n"
+            f"Targets Skipped: {len(skipped_items)}\n"
+            f"Verify Count: {verify_result.get('verified_count', 0)}\n"
+            f"Mismatch Count: {verify_result.get('mismatch_count', len(mismatches))}\n"
+            f"PLC Message: {result.get('message', '')}"
+        )
+
+        if mismatches:
+            mismatch_lines = []
+
+            for item in mismatches[:8]:
+                mismatch_lines.append(
+                    f"- {item.get('target_key')} | "
+                    f"Expected={item.get('expected')} | "
+                    f"Actual={item.get('actual')} | "
+                    f"DB={item.get('db')} | Byte={item.get('byte')}"
+                )
+
+            msg += "\n\nMismatches:\n" + "\n".join(mismatch_lines)
+
+            if len(mismatches) > 8:
+                msg += f"\n... and {len(mismatches) - 8} more."
+
+        return msg
     def _save_recipe_final(self):
         try:
             recipe_doc = self._build_final_recipe_doc()
@@ -2468,7 +2693,14 @@ class NewSKUPage(QWidget):
                 plc_client=self.plc_client,
                 write_to_plc=None,
             )
+            self.saved_recipe_doc = dict(recipe_doc)
+            self.saved_recipe_doc["_id"] = result.get("inserted_id")
+            self.saved_recipe_doc["version"] = result.get("version", recipe_doc.get("version"))
 
+            self.saved_recipe_result = dict(result)
+
+            if self.load_machine_btn is not None:
+                self.load_machine_btn.setEnabled(True)
             plc_result = result.get("plc_result", {}) or {}
             verify_result = plc_result.get("verify_result", {}) or {}
             recipe_number_result = plc_result.get("recipe_number_result", {}) or {}

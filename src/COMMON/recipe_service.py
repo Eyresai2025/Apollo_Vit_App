@@ -9,7 +9,7 @@ import struct
 from src.COMMON.common import load_env
 from src.COMMON.db import get_collection
 from src.COMMON.recipe_tag_map import RECIPE_TARGETS
-
+import time
 try:
     import snap7  # type: ignore
     from snap7.util import (  # type: ignore
@@ -433,6 +433,8 @@ class RecipeService:
 
             "tyre_name": sku_meta.get("tyre_name", ""),
             "tyre_size": sku_meta.get("tyre_size", ""),
+            "tyre_outer_diameter": sku_meta.get("tyre_outer_diameter"),
+            "tyre_rpm": sku_meta.get("tyre_rpm"),
             "barcode": sku_meta.get("barcode", ""),
             "barcode_pattern": sku_meta.get("barcode_pattern", ""),
             "inspection_zones": int(sku_meta.get("inspection_zones", 5)),
@@ -463,7 +465,27 @@ class RecipeService:
             "updated_at": _now_iso(),
             "author": author,
         }
+    def find_recipe_by_number(self, recipe_number):
+        """
+        Find existing SKU recipe by recipe_number / plc_recipe_number.
 
+        Used to prevent duplicate recipe numbers.
+        """
+        try:
+            recipe_number = int(recipe_number)
+        except Exception:
+            return None
+
+        return self.recipe_col.find_one(
+            {
+                "type": "sku_recipe",
+                "$or": [
+                    {"recipe_number": recipe_number},
+                    {"plc_recipe_number": recipe_number},
+                ],
+            },
+            sort=[("version", -1)],
+        )
     def get_next_version(self, sku_name: str) -> int:
         last = self.recipe_col.find_one(
             {
@@ -488,7 +510,21 @@ class RecipeService:
 
         recipe_doc = dict(recipe_doc)
         recipe_doc["updated_at"] = _now_iso()
+        recipe_number = (
+            recipe_doc.get("recipe_number")
+            or recipe_doc.get("plc_recipe_number")
+            or recipe_doc.get("sku_meta", {}).get("recipe_number")
+        )
 
+        existing_recipe = self.find_recipe_by_number(recipe_number)
+
+        if existing_recipe:
+            raise ValueError(
+                f"Recipe number {recipe_number} already exists for "
+                f"SKU {existing_recipe.get('sku_name', 'UNKNOWN')} "
+                f"version {existing_recipe.get('version', '-')}. "
+                "Duplicate recipe was not saved."
+            )
         inserted = self.recipe_col.insert_one(recipe_doc)
 
         # Important: keep inserted MongoDB _id inside recipe_doc
@@ -771,6 +807,195 @@ class RecipeService:
         except Exception:
             return False
         
+    def _write_recipe_name_to_plc(self, client, recipe_doc: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Writes recipe/tyre name to PLC.
+
+        PLC tag:
+            RECIPE Name = STRING at DB53.DBX0.0
+
+        Interpreted as Siemens STRING starting at:
+            DB53, byte 0
+
+        Siemens STRING[n] format:
+            byte 0 = max length
+            byte 1 = actual length
+            byte 2 onward = ASCII characters
+
+        Write-only tag: no read-back verification is done here.
+        """
+
+        enabled = _to_bool(self.env.get("RECIPE_NAME_WRITE_ENABLED", "False"))
+
+        if not enabled:
+            return {
+                "enabled": False,
+                "written": False,
+                "verified": False,
+                "recipe_name": "",
+                "message": "Recipe name PLC write disabled.",
+            }
+
+        recipe_name = (
+            recipe_doc.get("tyre_name")
+            or recipe_doc.get("recipe_name")
+            or recipe_doc.get("sku_name")
+            or recipe_doc.get("sku_meta", {}).get("tyre_name")
+            or recipe_doc.get("sku_meta", {}).get("sku_name")
+            or ""
+        )
+
+        recipe_name = str(recipe_name).strip()
+
+        if not recipe_name:
+            return {
+                "enabled": True,
+                "written": False,
+                "verified": False,
+                "recipe_name": "",
+                "message": "Recipe name is empty; DB53 string not written.",
+            }
+
+        db_no = int(self.env.get("RECIPE_NAME_WRITE_DB", "53"))
+        byte = int(self.env.get("RECIPE_NAME_WRITE_BYTE", "0"))
+        max_len = int(self.env.get("RECIPE_NAME_WRITE_MAX_LEN", "50"))
+
+        try:
+            # Siemens STRING[n]:
+            # [max_len][actual_len][characters...]
+            encoded = recipe_name.encode("ascii", errors="ignore")[:max_len]
+
+            data = bytearray(max_len + 2)
+            data[0] = max_len
+            data[1] = len(encoded)
+            data[2:2 + len(encoded)] = encoded
+
+            client.db_write(db_no, byte, data)
+
+            return {
+                "enabled": True,
+                "written": True,
+                "verified": True,  # write-only tag, treated as OK if db_write succeeds
+                "recipe_name": recipe_name,
+                "db": db_no,
+                "byte": byte,
+                "max_len": max_len,
+                "message": (
+                    f"Recipe name '{recipe_name}' written to DB{db_no}.DBX{byte}.0 "
+                    f"as STRING[{max_len}]."
+                ),
+            }
+
+        except Exception as e:
+            return {
+                "enabled": True,
+                "written": False,
+                "verified": False,
+                "recipe_name": recipe_name,
+                "db": db_no,
+                "byte": byte,
+                "max_len": max_len,
+                "message": f"Recipe name PLC write failed: {e}",
+            }   
+        
+    def _read_plc_bit(self, client, db_no: int, byte: int, bit: int):
+        """
+        Read one PLC BOOL bit from DBX address.
+        Example: DB53.DBX546.2
+        """
+        raw = client.db_read(int(db_no), int(byte), 1)
+        return bool(raw[0] & (1 << int(bit)))
+
+
+    def _write_plc_bit(self, client, db_no: int, byte: int, bit: int, value: bool):
+        """
+        Safe PLC BOOL write.
+
+        Reads full byte, modifies only selected bit, writes full byte back.
+        This avoids disturbing other bits in the same byte.
+        """
+        raw = client.db_read(int(db_no), int(byte), 1)
+        byte_val = int(raw[0])
+
+        if value:
+            byte_val = byte_val | (1 << int(bit))
+        else:
+            byte_val = byte_val & ~(1 << int(bit))
+
+        client.db_write(int(db_no), int(byte), bytes([byte_val]))
+
+
+    def _pulse_recipe_save_bit(self, client) -> Dict[str, Any]:
+        """
+        Pulses PLC recipe save bit.
+
+        PLC confirmed:
+            RECIPE save bit = DB53.DBX546.2 BOOL
+
+        Purpose:
+            After recipe values and recipe number are written,
+            PLC needs this bit TRUE to save/copy recipe internally.
+        """
+        enabled = _to_bool(self.env.get("RECIPE_SAVE_BIT_ENABLED", "False"))
+
+        if not enabled:
+            return {
+                "enabled": False,
+                "written": True,
+                "verified": True,
+                "message": "Recipe save bit disabled.",
+            }
+
+        db_no = int(self.env.get("RECIPE_SAVE_BIT_DB", "53"))
+        byte = int(self.env.get("RECIPE_SAVE_BIT_BYTE", "546"))
+        bit = int(self.env.get("RECIPE_SAVE_BIT_BIT", "2"))
+        pulse_sec = float(self.env.get("RECIPE_SAVE_BIT_PULSE_SEC", "0.5"))
+
+        try:
+            # Start LOW
+            self._write_plc_bit(client, db_no, byte, bit, False)
+            time.sleep(0.1)
+
+            # Pulse HIGH
+            self._write_plc_bit(client, db_no, byte, bit, True)
+            time.sleep(pulse_sec)
+
+            read_true = self._read_plc_bit(client, db_no, byte, bit)
+
+            # Reset LOW
+            self._write_plc_bit(client, db_no, byte, bit, False)
+            time.sleep(0.1)
+
+            read_false = self._read_plc_bit(client, db_no, byte, bit)
+
+            return {
+                "enabled": True,
+                "written": True,
+                "verified": read_false is False,
+                "db": db_no,
+                "byte": byte,
+                "bit": bit,
+                "pulse_sec": pulse_sec,
+                "read_true": read_true,
+                "read_false": read_false,
+                "message": (
+                    f"Recipe save bit pulsed DB{db_no}.DBX{byte}.{bit} "
+                    f"TRUE for {pulse_sec}s then reset FALSE. "
+                    f"Final readback={read_false}."
+                ),
+            }
+
+        except Exception as e:
+            return {
+                "enabled": True,
+                "written": False,
+                "verified": False,
+                "db": db_no,
+                "byte": byte,
+                "bit": bit,
+                "pulse_sec": pulse_sec,
+                "message": f"Recipe save bit pulse failed at DB{db_no}.DBX{byte}.{bit}: {e}",
+            }        
     def _write_recipe_number_to_plc(self, client, recipe_doc: Dict[str, Any]) -> Dict[str, Any]:
         """
         Writes PLC recipe number entry tag.
@@ -921,14 +1146,14 @@ class RecipeService:
             recipe_axis_targets = recipe_doc.get("recipe_axis_targets", {}) or {}
 
             if recipe_axis_targets:
+                recipe_name_result = self._write_recipe_name_to_plc(
+                    client=client,
+                    recipe_doc=recipe_doc,
+                )
+
                 write_result = self._write_recipe_targets_to_plc(
                     client=client,
                     recipe_axis_targets=recipe_axis_targets,
-                )
-
-                verify_result = self.verify_recipe_write(
-                    recipe_doc=recipe_doc,
-                    plc_client=client,
                 )
 
                 recipe_number_result = self._write_recipe_number_to_plc(
@@ -936,28 +1161,63 @@ class RecipeService:
                     recipe_doc=recipe_doc,
                 )
 
+                recipe_save_bit_result = self._pulse_recipe_save_bit(
+                    client=client,
+                )
+
+                verify_result = self.verify_recipe_write(
+                    recipe_doc=recipe_doc,
+                    plc_client=client,
+                )
+
                 db53_written_ok = bool(write_result.get("written", False))
                 db53_verify_ok = bool(verify_result.get("ok", False))
+
+                recipe_name_enabled = bool(recipe_name_result.get("enabled", False))
+                recipe_name_written_ok = (
+                    True if not recipe_name_enabled
+                    else bool(recipe_name_result.get("written", False))
+                )
 
                 recipe_no_written_ok = bool(recipe_number_result.get("written", False))
                 recipe_no_verify_ok = bool(recipe_number_result.get("verified", False))
 
-                overall_written = db53_written_ok and recipe_no_written_ok
-                overall_verified = db53_verify_ok and recipe_no_verify_ok
+                save_bit_enabled = bool(recipe_save_bit_result.get("enabled", False))
+                save_bit_ok = (
+                    True if not save_bit_enabled
+                    else bool(recipe_save_bit_result.get("written", False))
+                )
+
+                overall_written = (
+                    db53_written_ok
+                    and recipe_name_written_ok
+                    and recipe_no_written_ok
+                    and save_bit_ok
+                )
+
+                overall_verified = (
+                    db53_verify_ok
+                    and recipe_no_verify_ok
+                    and save_bit_ok
+                )
 
                 final_result = {
                     "enabled": True,
                     "written": overall_written,
                     "verified": overall_verified,
                     "message": (
+                        f"{recipe_name_result.get('message', '')} "
                         f"{write_result.get('message', '')} "
-                        f"{verify_result.get('message', '')} "
-                        f"{recipe_number_result.get('message', '')}"
+                        f"{recipe_number_result.get('message', '')} "
+                        f"{recipe_save_bit_result.get('message', '')} "
+                        f"{verify_result.get('message', '')}"
                     ).strip(),
 
                     "write_result": write_result,
                     "verify_result": verify_result,
+                    "recipe_name_result": recipe_name_result,
                     "recipe_number_result": recipe_number_result,
+                    "recipe_save_bit_result": recipe_save_bit_result,
 
                     "written_items": write_result.get("written_items", []),
                     "skipped_items": write_result.get("skipped_items", []),
@@ -965,8 +1225,10 @@ class RecipeService:
 
                     "db53_written": db53_written_ok,
                     "db53_verified": db53_verify_ok,
+                    "recipe_name_written": recipe_name_written_ok,
                     "recipe_number_written": recipe_no_written_ok,
                     "recipe_number_verified": recipe_no_verify_ok,
+                    "recipe_save_bit_written": save_bit_ok,
                 }
 
                 if overall_written:
@@ -981,23 +1243,45 @@ class RecipeService:
                 recipe_doc=recipe_doc,
             )
 
+            recipe_name_result = self._write_recipe_name_to_plc(
+                client=client,
+                recipe_doc=recipe_doc,
+            )
+
             recipe_number_result = self._write_recipe_number_to_plc(
                 client=client,
                 recipe_doc=recipe_doc,
             )
 
+            recipe_save_bit_result = self._pulse_recipe_save_bit(
+                client=client,
+            )
             legacy_written = bool(legacy_result.get("written", False))
             recipe_no_written = bool(recipe_number_result.get("written", False))
             recipe_no_verified = bool(recipe_number_result.get("verified", False))
 
+            recipe_name_enabled = bool(recipe_name_result.get("enabled", False))
+            recipe_name_written = (
+                True if not recipe_name_enabled
+                else bool(recipe_name_result.get("written", False))
+            )
+
+            save_bit_enabled = bool(recipe_save_bit_result.get("enabled", False))
+            save_bit_ok = (
+                True if not save_bit_enabled
+                else bool(recipe_save_bit_result.get("written", False))
+            )
+
             final_result = {
                 "enabled": True,
-                "written": legacy_written and recipe_no_written,
-                "verified": recipe_no_verified,
+                "written": legacy_written and recipe_name_written and recipe_no_written and save_bit_ok,
+                "verified": recipe_no_verified and save_bit_ok,
                 "message": (
+                    f"{recipe_name_result.get('message', '')} "
                     f"{legacy_result.get('message', '')} "
-                    "Verification skipped for legacy recipe target format. "
-                    f"{recipe_number_result.get('message', '')}"
+                    f"{recipe_number_result.get('message', '')} "
+                    f"{recipe_save_bit_result.get('message', '')} "
+                    "Verification skipped for legacy recipe target format."
                 ).strip(),
                 "write_result": legacy_result,
                 "verify_result": {
@@ -1009,6 +1293,8 @@ class RecipeService:
                 "recipe_number_result": recipe_number_result,
                 "recipe_number_written": recipe_no_written,
                 "recipe_number_verified": recipe_no_verified,
+                "recipe_save_bit_result": recipe_save_bit_result,
+                "recipe_save_bit_written": save_bit_ok,
             }
 
             if final_result["written"]:

@@ -67,7 +67,7 @@ from src.UI.live_result_ui import (
     create_tyre_result_summary_widget,
     apply_tyre_result_to_gui,
 )
-
+from src.Pages.capture_settings_tab import CameraCaptureSettingsTab
 os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
 os.environ["QT_DEVICE_PIXEL_RATIO"] = "0"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
@@ -751,6 +751,7 @@ class MainWindow(QMainWindow):
         self.axis_status_page = None
         self.device_page = None
         self.recipe_management_page = None
+        self.capture_settings_page = None
         self._last_stack_widget = None
         self.available_skus = []
         self.pending_preload_sku = None
@@ -2129,6 +2130,7 @@ class MainWindow(QMainWindow):
             ("Test Mode", "test_mode.png", self.open_test_popup),
             ("Live", "run_smart_qc.png", self.capture_image),
             ("Device", "cam.png", self.open_device_page),
+            ("Capture", "cam.png", self.open_capture_settings_page),
             ("Axis Status", "motor.png", self.open_axis_status_page),
             ("Run New SKU", "run_new_sku.png", self.run_new_sku),
             ("Recipe Management", "recipe.png", self.open_recipe_management_page),
@@ -2624,7 +2626,34 @@ class MainWindow(QMainWindow):
             self.content_stack.setCurrentWidget(self.test_mode_page)
         if self.back_btn:
             self.back_btn.setVisible(True)
-    
+
+    def open_capture_settings_page(self):
+        try:
+            # Stop Axis Status refresh if it is running
+            try:
+                if getattr(self, "axis_status_page", None) is not None:
+                    if hasattr(self.axis_status_page, "stop_refresh"):
+                        self.axis_status_page.stop_refresh()
+            except Exception:
+                pass
+
+            # Create Capture Settings page only once
+            if getattr(self, "capture_settings_page", None) is None:
+                self.capture_settings_page = CameraCaptureSettingsTab(parent=self)
+                self.content_stack.addWidget(self.capture_settings_page)
+
+            # Show Capture Settings page
+            self.content_stack.setCurrentWidget(self.capture_settings_page)
+
+            if self.back_btn:
+                self.back_btn.setVisible(True)
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Capture Settings Error",
+                f"Failed to open Capture Settings page:\n{e}"
+            )
     def open_device_page(self):
         try:
             # Stop axis status refresh if it was running

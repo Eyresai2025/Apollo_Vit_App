@@ -475,9 +475,18 @@ class LineScanCamera:
             print(f"[{self.serial_number}] Already connected.")
             return
 
-        devices = system.create_device()
+        target_info = None
 
-        self.device = self._select_device(devices)
+        for info in system.device_infos:
+            if str(info.get("serial")) == str(self.serial_number):
+                target_info = info
+                break
+
+        if target_info is None:
+            raise RuntimeError(f"Camera serial {self.serial_number} not found in Arena device list")
+
+        devices = system.create_device([target_info])
+        self.device = devices[0]
         self.nodemap = self.device.nodemap
 
         actual_serial = self._get_node_value("DeviceSerialNumber", self.serial_number)
