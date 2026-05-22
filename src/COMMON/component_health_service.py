@@ -435,15 +435,48 @@ class ComponentHealthService:
     def get_health(self, inspection_running=False):
         state = self._get_hardware_state()
 
-        plc = self._check_plc(state)
-        app_ok = self._check_app_ok_bit(state)
-        cameras = self._check_cameras(state)
-        laser = self._check_laser(state)
-        gpu = self._check_gpu()
-        storage = self._check_storage()
-        mode = self._check_machine_mode(state)
+        if inspection_running:
+            last_result = state.get("last_result") or {}
 
-        # All items shown in Live Page component health
+            plc_ok = bool(last_result.get("plc_ok", False))
+            camera_ok = bool(last_result.get("camera_ok", False))
+            laser_ok = bool(last_result.get("laser_ok", False))
+            app_ok_sent = bool(last_result.get("app_ok_sent", False))
+
+            plc = {
+                "ok": plc_ok,
+                "title": "PLC",
+                "text": "Connected" if plc_ok else "Last check not OK",
+                "detail": {"live_polling_paused": True},
+            }
+
+            app_ok = {
+                "ok": app_ok_sent,
+                "title": "App OK",
+                "text": "Live running - PLC read paused",
+                "detail": {"live_polling_paused": True},
+            }
+
+            cameras = self._check_cameras(state)
+            laser = self._check_laser(state)
+            gpu = self._check_gpu()
+            storage = self._check_storage()
+
+            mode = {
+                "mode": "LIVE",
+                "mode_ok": True,
+                "text": "Mode: LIVE",
+            }
+
+        else:
+            plc = self._check_plc(state)
+            app_ok = self._check_app_ok_bit(state)
+            cameras = self._check_cameras(state)
+            laser = self._check_laser(state)
+            gpu = self._check_gpu()
+            storage = self._check_storage()
+            mode = self._check_machine_mode(state)
+
         items = {
             "plc": plc,
             "cameras": cameras,
@@ -453,7 +486,6 @@ class ComponentHealthService:
             "app_ok": app_ok,
         }
 
-        # Only these items decide System READY / NOT READY
         required_items = {
             "plc": plc,
             "cameras": cameras,
@@ -462,7 +494,6 @@ class ComponentHealthService:
             "app_ok": app_ok,
         }
 
-        # Laser should block READY only if REQUIRE_LASER=True
         if self.require_laser:
             required_items["laser"] = laser
 

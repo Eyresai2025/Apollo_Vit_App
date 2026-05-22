@@ -48,7 +48,13 @@ try:
 except Exception:
     def set_live_progress(*args, **kwargs):
         pass
-
+try:
+    from src.models.Pipeline.R_inner_mapping_alignment import (
+        extract_sidewall_r_anchor_from_meta,
+    )
+except Exception as e:
+    print(f"[MAIN][WARN] failed to import extract_sidewall_r_anchor_from_meta: {e}")
+    extract_sidewall_r_anchor_from_meta = None
 # =========================================================
 # THREAD OPTIMIZATION
 # =========================================================
@@ -87,11 +93,11 @@ DEFAULT_USE_YOLO_SEG = True
 SEG_IMGSZ = 224
 
 ENABLE_STAGE_PIPELINE = True
-PIPELINE_FALLBACK_TO_INFER_SINGLE = True
+PIPELINE_FALLBACK_TO_INFER_SINGLE = False
 ENABLE_TRT_VIT = True
 CLEAN_YOLO_CACHE = True
 
-CAMERA_CAPTURE_ENABLED = False
+CAMERA_CAPTURE_ENABLED = True
 CAPTURE_IMAGE_FORMAT = ".png"
 CAPTURE_JPEG_QUALITY = 95
 
@@ -123,7 +129,10 @@ SIDE_MODULES = {
     "bead": bead,
 }
 
-DEFAULT_SIDE_ORDER = ["innerwall", "sidewall1", "sidewall2", "tread", "bead"]
+# DEFAULT_SIDE_ORDER = ["innerwall", "sidewall1", "sidewall2", "tread", "bead"]
+# Current active inspection sides.
+# Innerwall and bead are not enabled yet.
+DEFAULT_SIDE_ORDER = ["sidewall1", "sidewall2", "tread"]
 
 def _build_camera_serial_map_from_env() -> Dict[str, str]:
     """
@@ -254,11 +263,17 @@ def capture_and_save_images(
     cycle_capture_dir: str,
     sides_to_run: List[str],
 ) -> Dict[str, str]:
+    """
+    Capture and save images from the live camera manager.
+
+    Supports both:
+      old manager output: {serial_number: image}
+      new shared-camera manager output: {side_name: image}
+    """
     print("[CAPTURE] Starting camera capture for all sides ...")
 
     raw_images: Dict[str, np.ndarray] = multi_camera_manager.capture_all()
 
-    # Prefer live mapping from MultiCameraManager if available
     if hasattr(multi_camera_manager, "camera_to_side"):
         serial_to_side = {
             str(serial): side
@@ -267,36 +282,55 @@ def capture_and_save_images(
     else:
         serial_to_side = get_camera_to_side_map()
 
+    if hasattr(multi_camera_manager, "side_to_camera"):
+        side_to_camera = {
+            str(side): str(serial)
+            for side, serial in multi_camera_manager.side_to_camera.items()
+        }
+    else:
+        side_to_camera = get_side_to_camera_map()
+
+    known_sides = set(side_to_camera.keys()) | set(sides_to_run)
     image_map: Dict[str, str] = {}
 
-    for serial_str, img in raw_images.items():
-        serial_str = str(serial_str)
+    for image_key, img in raw_images.items():
+        image_key = str(image_key)
 
         if img is None:
-            side = serial_to_side.get(serial_str, serial_str)
-            print(f"[CAPTURE][WARN] No image for serial {serial_str} side={side}")
+            side = image_key if image_key in known_sides else serial_to_side.get(image_key, image_key)
+            print(f"[CAPTURE][WARN] No image for key={image_key} side={side}")
             continue
 
-        side = serial_to_side.get(serial_str)
+        # New manager returns side names directly.
+        if image_key in known_sides:
+            side = image_key
+            serial_for_folder = side_to_camera.get(side, image_key)
+        else:
+            # Backward compatibility: old manager returned serial numbers.
+            side = serial_to_side.get(image_key)
+            serial_for_folder = image_key
 
         if not side:
-            print(f"[CAPTURE][WARN] Serial {serial_str} not mapped in .env.")
-            side = f"camera_{serial_str}"
+            print(f"[CAPTURE][WARN] Camera key {image_key} not mapped in .env.")
+            side = f"camera_{image_key}"
 
-        folder_name = f"serial_{serial_str}"
+        # Keep existing application folder style: serial_<serial>.
+        # For shared camera, innerwall and bead may both have serial_250500042;
+        # use side-specific filename so one does not overwrite the other.
+        folder_name = f"serial_{serial_for_folder}"
         cam_folder = _camera_serial_folder(cycle_capture_dir, folder_name)
 
-        file_name = f"image{CAPTURE_IMAGE_FORMAT}"
+        file_name = f"{side}{CAPTURE_IMAGE_FORMAT}"
         out_path = os.path.join(cam_folder, file_name)
 
         _save_image(img, out_path)
 
-        print(f"[CAPTURE] Saved {serial_str} -> {out_path}")
+        print(f"[CAPTURE] Saved key={image_key} side={side} -> {out_path}")
 
         if side in sides_to_run:
             image_map[side] = out_path
         else:
-            print(f"[CAPTURE][WARN] Side {side} not selected in sides_to_run.")
+            print(f"[CAPTURE][WARN] Side {side} saved but not selected in sides_to_run.")
 
     return image_map
 
@@ -435,7 +469,35 @@ def _get_side_artifacts_dir(
 
     return artifacts_dir
 
+def _read_side_offset_ratio(side_artifacts_dir: str, side_name: str) -> float:
+    """
+    Reads non-R side offset ratio from artifacts folder.
 
+    Expected file:
+        media/AI_Calibration_Files/<SKU>/calibration_<side>/artifacts/offset_ratio.json
+
+    Example:
+        {
+            "offset_ratio": 0.35
+        }
+    """
+
+    if side_name in ["sidewall1", "sidewall2"]:
+        return 0.0
+
+    offset_json = os.path.join(side_artifacts_dir, "offset_ratio.json")
+
+    if not os.path.isfile(offset_json):
+        print(
+            f"[MAIN][WARN] offset_ratio.json missing for {side_name}. "
+            "Using 0.0. Crop may be wrong."
+        )
+        return 0.0
+
+    with open(offset_json, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    return float(data.get("offset_ratio", 0.0))
 def _get_sku_artifacts_dir(
     media_root: str,
     sku_name: str,
@@ -485,6 +547,124 @@ def _shared_artifacts_ref_image(media_root: str, sku_name: str) -> str:
         side_name="sidewall1",
     )
 
+# =========================================================
+# SKU-SPECIFIC MODEL HELPERS
+# Structure:
+#   media/AI_Calibration_Files/<SKU>/models/r_detector.pt
+#   media/AI_Calibration_Files/<SKU>/models/sidewall1_checkpoint.pth
+#   media/AI_Calibration_Files/<SKU>/models/sidewall2_checkpoint.pth
+#   media/AI_Calibration_Files/<SKU>/models/tread_checkpoint.pth
+# =========================================================
+
+SKU_MODEL_DIR_NAME = "models"
+
+SIDE_CHECKPOINT_FILE_CANDIDATES = {
+    "sidewall1": [
+        "sidewall1_checkpoint.pth",
+        "checkpoint_sidewall1.pth",
+        "sw1_checkpoint.pth",
+        "checkpoint_sw1.pth",
+    ],
+    "sidewall2": [
+        "sidewall2_checkpoint.pth",
+        "checkpoint_sidewall2.pth",
+        "sw2_checkpoint.pth",
+        "checkpoint_sw2.pth",
+    ],
+    "tread": [
+        "tread_checkpoint.pth",
+        "checkpoint_tread.pth",
+    ],
+    "innerwall": [
+        "innerwall_checkpoint.pth",
+        "checkpoint_innerwall.pth",
+    ],
+    "bead": [
+        "bead_checkpoint.pth",
+        "checkpoint_bead.pth",
+    ],
+}
+
+R_DETECTOR_FILE_CANDIDATES = [
+    "r_detector.pt",
+    "R_detector.pt",
+    "best_R.pt",
+    "best_R_CEAT_DEMO.pt",
+    "R_Detection.pt",
+]
+
+
+def _get_sku_models_dir(media_root: str, sku_name: str) -> str:
+    return os.path.join(
+        _get_sku_calibration_dir(media_root, sku_name),
+        SKU_MODEL_DIR_NAME,
+    )
+
+
+def _find_first_existing(paths: List[str]) -> Optional[str]:
+    for path in paths:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+def _resolve_sku_r_detector_path(
+    media_root: str,
+    sku_name: str,
+    fallback_r_detector_path: Optional[str],
+) -> str:
+    sku_models_dir = _get_sku_models_dir(media_root, sku_name)
+
+    candidates = [
+        os.path.join(sku_models_dir, name)
+        for name in R_DETECTOR_FILE_CANDIDATES
+    ]
+
+    found = _find_first_existing(candidates)
+
+    if found:
+        print(f"[MAIN][MODEL] Using SKU R-detector: {found}")
+        return found
+
+    if fallback_r_detector_path and os.path.isfile(fallback_r_detector_path):
+        print(f"[MAIN][MODEL] Using fallback/global R-detector: {fallback_r_detector_path}")
+        return fallback_r_detector_path
+
+    raise FileNotFoundError(
+        "R detector model not found.\n"
+        f"Checked SKU model folder: {sku_models_dir}\n"
+        f"Fallback path: {fallback_r_detector_path}"
+    )
+
+
+def _resolve_side_checkpoint_path(
+    media_root: str,
+    sku_name: str,
+    side_name: str,
+    fallback_checkpoint_path: Optional[str],
+) -> str:
+    sku_models_dir = _get_sku_models_dir(media_root, sku_name)
+
+    candidates = [
+        os.path.join(sku_models_dir, file_name)
+        for file_name in SIDE_CHECKPOINT_FILE_CANDIDATES.get(side_name, [])
+    ]
+
+    found = _find_first_existing(candidates)
+
+    if found:
+        print(f"[MAIN][MODEL] Using SKU checkpoint for {side_name}: {found}")
+        return found
+
+    if fallback_checkpoint_path and os.path.isfile(fallback_checkpoint_path):
+        print(f"[MAIN][MODEL] Using fallback/global checkpoint for {side_name}: {fallback_checkpoint_path}")
+        return fallback_checkpoint_path
+
+    raise FileNotFoundError(
+        f"VIT checkpoint not found for side: {side_name}\n"
+        f"Checked SKU model folder: {sku_models_dir}\n"
+        f"Fallback path: {fallback_checkpoint_path}"
+    )
 
 # =========================================================
 # IMAGE MAP HELPERS
@@ -594,26 +774,31 @@ def build_seg_models(
     seg_model_a_path: str,
     seg_model_b_path: str,
 ) -> Dict[str, Any]:
-    _required_file(seg_model_a_path, "seg_model_a_path")
-    _required_file(seg_model_b_path, "seg_model_b_path")
+    seg_model_a_path = _required_file(seg_model_a_path, "seg_model_a_path")
+    seg_model_b_path = _required_file(seg_model_b_path, "seg_model_b_path")
+
+    same_model = os.path.abspath(seg_model_a_path) == os.path.abspath(seg_model_b_path)
 
     try:
         seg_a = load_yolo_seg(seg_model_a_path, device=device, imgsz=SEG_IMGSZ)
     except TypeError:
         seg_a = load_yolo_seg(seg_model_a_path, device=device)
 
-    try:
-        seg_b = load_yolo_seg(seg_model_b_path, device=device, imgsz=SEG_IMGSZ)
-    except TypeError:
-        seg_b = load_yolo_seg(seg_model_b_path, device=device)
+    if same_model:
+        seg_b = seg_a
+        print("[MAIN] one shared classification model loaded for seg_a and seg_b")
+    else:
+        try:
+            seg_b = load_yolo_seg(seg_model_b_path, device=device, imgsz=SEG_IMGSZ)
+        except TypeError:
+            seg_b = load_yolo_seg(seg_model_b_path, device=device)
 
-    print("[MAIN] segmentation models loaded once")
+        print("[MAIN] segmentation models loaded separately")
 
     return {
         "seg_a": seg_a,
         "seg_b": seg_b,
     }
-
 
 def _get_runtime_cache_key(
     sku_name,
@@ -666,25 +851,35 @@ def _build_same_model_side_configs(
     r_detector_path,
     tyre_name=DEFAULT_TYRE_NAME,
     use_yolo_seg=DEFAULT_USE_YOLO_SEG,
+    sides_to_run=None,
 ) -> Dict[str, Dict[str, Any]]:
-    """
-    Builds per-side runtime config.
+    selected_sides = _resolve_sides(sides_to_run)
 
-    Final artifact layout:
-        media/AI_Calibration_Files/<SKU>/calibration_sidewall1/artifacts
-        media/AI_Calibration_Files/<SKU>/calibration_sidewall2/artifacts
-        media/AI_Calibration_Files/<SKU>/calibration_innerwall/artifacts
-        media/AI_Calibration_Files/<SKU>/calibration_tread/artifacts
-        media/AI_Calibration_Files/<SKU>/calibration_bead/artifacts
-    """
+    resolved_r_detector_path = _resolve_sku_r_detector_path(
+        media_root=media_root,
+        sku_name=sku_name,
+        fallback_r_detector_path=r_detector_path,
+    )
 
     side_configs: Dict[str, Dict[str, Any]] = {}
 
-    for side_name in DEFAULT_SIDE_ORDER:
+    for side_name in selected_sides:
         side_artifacts_dir = _get_side_artifacts_dir(
             media_root=media_root,
             sku_name=sku_name,
             side_name=side_name,
+        )
+
+        offset_ratio = _read_side_offset_ratio(
+            side_artifacts_dir=side_artifacts_dir,
+            side_name=side_name,
+        )
+
+        side_checkpoint_path = _resolve_side_checkpoint_path(
+            media_root=media_root,
+            sku_name=sku_name,
+            side_name=side_name,
+            fallback_checkpoint_path=vit_checkpoint_path,
         )
 
         side_ref_image = os.path.join(
@@ -692,29 +887,36 @@ def _build_same_model_side_configs(
             "alignment_reference_polarized.png",
         )
 
-        if not os.path.isfile(side_ref_image):
-            raise FileNotFoundError(
-                f"Missing alignment reference for {side_name}: {side_ref_image}"
-            )
+        # Sidewall needs this file.
+        # New AI-team tread flow does NOT need this file.
+        if side_name in ["sidewall1", "sidewall2"]:
+            if not os.path.isfile(side_ref_image):
+                raise FileNotFoundError(
+                    f"Missing alignment reference for {side_name}: {side_ref_image}"
+                )
+        else:
+            if not os.path.isfile(side_ref_image):
+                side_ref_image = None
 
         side_configs[side_name] = dict(
-            checkpoint_path=vit_checkpoint_path,
+            checkpoint_path=side_checkpoint_path,
             output_dir=media_root,
-            yolo_r_path=r_detector_path,
+            yolo_r_path=resolved_r_detector_path,
             use_yolo_seg=use_yolo_seg,
             tyre_name=tyre_name,
 
-            # IMPORTANT:
-            # Each side gets its own artifact folder.
             calibration_artifact_dir=side_artifacts_dir,
+            x_align_artifacts_dir=side_artifacts_dir,
+            offset_ratio=offset_ratio,
 
-            # Passed for backward compatibility.
-            # Actual artifact loading uses calibration_artifact_dir_override first.
             ref_image_path=side_ref_image,
         )
 
         print(
-            f"[MAIN][ARTIFACTS] {side_name} -> {side_artifacts_dir}"
+            f"[MAIN][CONFIG] {side_name} | "
+            f"artifacts={side_artifacts_dir} | "
+            f"checkpoint={side_checkpoint_path} | "
+            f"offset_ratio={offset_ratio}"
         )
 
     return side_configs
@@ -819,24 +1021,40 @@ def build_all_runtimes(
     device = _normalize_device(device)
     sides_to_run = _resolve_sides(sides_to_run)
 
-    _required_file(vit_checkpoint_path, "vit_checkpoint_path")
-    _required_file(r_detector_path, "r_detector_path")
+    resolved_r_detector_path = _resolve_sku_r_detector_path(
+        media_root=media_root,
+        sku_name=sku_name,
+        fallback_r_detector_path=r_detector_path,
+    )
+
+    _required_file(resolved_r_detector_path, "r_detector_path")
 
     if side_configs is None:
         side_configs = _build_same_model_side_configs(
             media_root=media_root,
             sku_name=sku_name,
             vit_checkpoint_path=vit_checkpoint_path,
-            r_detector_path=r_detector_path,
+            r_detector_path=resolved_r_detector_path,
             tyre_name=tyre_name,
+            sides_to_run=sides_to_run,
         )
+
+    r_detector_path = resolved_r_detector_path
+
+    model_signature = "||".join(
+        [
+            side_configs[s]["checkpoint_path"]
+            for s in sides_to_run
+            if s in side_configs
+        ]
+    )
 
     cache_key = _get_runtime_cache_key(
         sku_name,
         device,
         seg_model_a_path,
         seg_model_b_path,
-        vit_checkpoint_path,
+        model_signature,
         r_detector_path,
         media_root,
         sides_to_run,
@@ -873,6 +1091,8 @@ def build_all_runtimes(
             seg_models=seg_models,
             shared_r_detector=shared_r_detector,
         )
+        runtimes[side_name]["side_config"] = side_cfg
+        runtimes[side_name]["offset_ratio"] = float(side_cfg.get("offset_ratio", 0.0))
 
     _RUNTIME_CACHE[cache_key] = runtimes
 
@@ -1030,6 +1250,7 @@ def run_side_pipeline(
     r_gpu_sem,
     vit_gpu_sem,
     yolo_gpu_sem,
+    sidewall_r_anchor=None,
 ):
     module = SIDE_MODULES[side_name]
 
@@ -1057,7 +1278,6 @@ def run_side_pipeline(
     os.makedirs(side_final_dir, exist_ok=True)
 
     crop_path = os.path.join(side_crop_dir, "crop.png")
-
     vit_df = pd.DataFrame()
 
     # =========================================================
@@ -1069,22 +1289,63 @@ def run_side_pipeline(
         _, pre_bgr = module.read_and_polarize(image_path)
 
         with _sem_context(r_gpu_sem):
+            # -------------------------------------------------
+            # Non-R sides: innerwall / tread / bead
+            # -------------------------------------------------
             if side_name in ["innerwall", "tread", "bead"]:
-                crop_bgr = module.align_crop_from_preprocessed(
-                    pre_bgr=pre_bgr,
-                    ref_pre_bgr=runtime["ref_pre_bgr"],
-                    r_detector=runtime.get("r_detector"),
-                    save_template_path=None,
-                    ref_info=runtime.get("reference_band_info"),
-                    use_incoming_r_detection=False,
+                if sidewall_r_anchor is None:
+                    raise RuntimeError(
+                        f"{side_name} requires sidewall_r_anchor from current sidewall1/sidewall2."
+                    )
+
+                x_align_debug_path = os.path.join(
+                    side_final_dir,
+                    f"{name}_{side_name}_xalign_debug.png",
                 )
+
+                x_align_artifacts_dir = runtime.get("x_align_artifacts_dir") or runtime.get("calibration_artifact_dir")
+
+                if not x_align_artifacts_dir:
+                    raise RuntimeError(
+                        f"{side_name} missing runtime['calibration_artifact_dir'] / x_align_artifacts_dir"
+                    )
+
+                # New AI-team tread uses clean x-align signature.
+                if side_name == "tread":
+                    crop_bgr, non_r_meta = module.align_crop_from_preprocessed(
+                        pre_bgr=pre_bgr,
+                        sidewall_r_anchor=sidewall_r_anchor,
+                        offset_ratio=float(runtime.get("offset_ratio", 0.0)),
+                        x_align_artifacts_dir=x_align_artifacts_dir,
+                        create_x_reference_if_missing=False,
+                        x_align_debug_path=x_align_debug_path,
+                        return_meta=True,
+                    )
+
+                # Keep old-compatible signature for innerwall/bead when you enable them later.
+                else:
+                    crop_bgr, non_r_meta = module.align_crop_from_preprocessed(
+                        pre_bgr=pre_bgr,
+                        ref_pre_bgr=None,
+                        r_detector=None,
+                        save_template_path=None,
+                        ref_info=None,
+                        use_incoming_r_detection=False,
+                        sidewall_r_anchor=sidewall_r_anchor,
+                        offset_ratio=float(runtime.get("offset_ratio", 0.0)),
+                        x_align_artifacts_dir=x_align_artifacts_dir,
+                        create_x_reference_if_missing=False,
+                        x_align_debug_path=x_align_debug_path,
+                        return_meta=True,
+                    )
+
+                result["alignment_meta"] = non_r_meta
+
+            # -------------------------------------------------
+            # R sides: sidewall1 / sidewall2
+            # -------------------------------------------------
             else:
                 crop_anchor_ref_path = runtime.get("crop_anchor_ref_path")
-
-                if crop_anchor_ref_path and not os.path.isfile(crop_anchor_ref_path):
-                    raise RuntimeError(
-                        f"Missing crop anchor reference for {side_name}: {crop_anchor_ref_path}"
-                    )
 
                 crop_anchor_debug_path = os.path.join(
                     side_crop_dir,
@@ -1096,7 +1357,7 @@ def run_side_pipeline(
                     "aligned_template.png",
                 )
 
-                crop_bgr = module.align_crop_from_preprocessed(
+                crop_bgr, sidewall_meta = module.align_crop_from_preprocessed(
                     pre_bgr=pre_bgr,
                     ref_pre_bgr=runtime["ref_pre_bgr"],
                     r_detector=runtime.get("r_detector"),
@@ -1105,10 +1366,22 @@ def run_side_pipeline(
                     crop_anchor_ref_path=crop_anchor_ref_path,
                     crop_anchor_debug_path=crop_anchor_debug_path,
                     debug_name=f"INFER_{side_name}_{name}",
+                    return_meta=True,
                 )
 
-        crop_gray = module.to_gray(crop_bgr)
+                result["alignment_meta"] = sidewall_meta
 
+                if side_name in ["sidewall1", "sidewall2"]:
+                    if extract_sidewall_r_anchor_from_meta is None:
+                        raise RuntimeError(
+                            "extract_sidewall_r_anchor_from_meta import failed"
+                        )
+
+                    result["sidewall_r_anchor"] = extract_sidewall_r_anchor_from_meta(
+                        sidewall_meta
+                    )
+
+        crop_gray = module.to_gray(crop_bgr)
         cv2.imwrite(crop_path, crop_gray)
 
         result["crop_path"] = crop_path
@@ -1122,7 +1395,6 @@ def run_side_pipeline(
         result["side_latency_sec"] = round(time.perf_counter() - side_t0, 3)
 
         print(f"[PIPELINE][ERROR] {side_name} alignment failed | error={e}")
-
         return side_name, result
 
     # =========================================================
@@ -1165,7 +1437,9 @@ def run_side_pipeline(
                 result["template_stitched_path"] = None
 
         if vit_df is not None and not vit_df.empty:
-            valid_df = vit_df[vit_df["classification"].isin(["GOOD", "DEFECT"])].copy()
+            valid_df = vit_df[
+                vit_df["classification"].isin(["GOOD", "DEFECT"])
+            ].copy()
 
             result["vit_valid_patches"] = int(len(valid_df))
             result["vit_defect_patches"] = (
@@ -1191,7 +1465,6 @@ def run_side_pipeline(
         result["side_latency_sec"] = round(time.perf_counter() - side_t0, 3)
 
         print(f"[PIPELINE][ERROR] {side_name} ViT/template failed | error={e}")
-
         return side_name, result
 
     # =========================================================
@@ -1271,7 +1544,6 @@ def run_side_pipeline(
 
     return side_name, result
 
-
 def _run_one_side_infer(
     side_name,
     image_path,
@@ -1280,6 +1552,7 @@ def _run_one_side_infer(
     r_gpu_sem,
     vit_gpu_sem,
     yolo_gpu_sem,
+    sidewall_r_anchor=None,
 ):
     module = SIDE_MODULES[side_name]
 
@@ -1293,6 +1566,7 @@ def _run_one_side_infer(
                 r_gpu_sem,
                 vit_gpu_sem,
                 yolo_gpu_sem,
+                sidewall_r_anchor=sidewall_r_anchor,
             )
 
             if result.get("final_label") != "FAILED":
@@ -1375,12 +1649,71 @@ def run_cycle(
         if side_name not in image_map:
             raise ValueError(f"Missing image for side: {side_name}")
 
-    if PARALLEL_INFER:
-        workers = min(INFER_SIDE_WORKERS, len(sides_to_run))
+    non_r_sides = {"innerwall", "tread", "bead"}
+    anchor_candidates = ["sidewall1", "sidewall2"]
+
+    need_sidewall_anchor = any(s in non_r_sides for s in sides_to_run)
+
+    anchor_side = None
+    sidewall_r_anchor = None
+
+    if need_sidewall_anchor:
+        for candidate in anchor_candidates:
+            if candidate in sides_to_run:
+                anchor_side = candidate
+                break
+
+        if anchor_side is None:
+            raise RuntimeError(
+                "Live inference for innerwall/tread/bead requires sidewall1 or sidewall2 "
+                "in sides_to_run, because current sidewall R anchor is required."
+            )
+
+        print(f"[PIPELINE] Running anchor side first: {anchor_side}")
+
+        _, anchor_result = _run_one_side_infer(
+            side_name=anchor_side,
+            image_path=image_map[anchor_side],
+            runtime=runtimes[anchor_side],
+            cycle_dir=cycle_dir,
+            r_gpu_sem=r_gpu_sem,
+            vit_gpu_sem=vit_gpu_sem,
+            yolo_gpu_sem=yolo_gpu_sem,
+            sidewall_r_anchor=None,
+        )
+
+        side_results[anchor_side] = anchor_result
+
+        if anchor_result.get("final_label") == "FAILED":
+            raise RuntimeError(
+                f"Anchor side failed: {anchor_side} | {anchor_result.get('error')}"
+            )
+
+        sidewall_r_anchor = anchor_result.get("sidewall_r_anchor")
+
+        if sidewall_r_anchor is None:
+            raise RuntimeError(
+                f"Anchor side did not return sidewall_r_anchor: {anchor_side}"
+            )
+
+        print(f"[PIPELINE] Current sidewall R anchor: {sidewall_r_anchor}")
+
+    remaining_sides = [s for s in sides_to_run if s != anchor_side]
+
+    if PARALLEL_INFER and remaining_sides:
+        workers = min(INFER_SIDE_WORKERS, len(remaining_sides))
 
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futures = {
-                ex.submit(
+            futures = {}
+
+            for side_name in remaining_sides:
+                anchor_for_side = (
+                    sidewall_r_anchor
+                    if side_name in non_r_sides
+                    else None
+                )
+
+                fut = ex.submit(
                     _run_one_side_infer,
                     side_name,
                     image_map[side_name],
@@ -1389,9 +1722,10 @@ def run_cycle(
                     r_gpu_sem,
                     vit_gpu_sem,
                     yolo_gpu_sem,
-                ): side_name
-                for side_name in sides_to_run
-            }
+                    anchor_for_side,
+                )
+
+                futures[fut] = side_name
 
             for fut in as_completed(futures):
                 side_name = futures[fut]
@@ -1399,6 +1733,7 @@ def run_cycle(
                 try:
                     _, result = fut.result()
                     side_results[side_name] = result
+
                     set_live_progress(
                         phase="INFERENCE",
                         active_zone=side_name,
@@ -1416,6 +1751,7 @@ def run_cycle(
                         "final_label": "FAILED",
                         "error": str(e),
                     }
+
                     set_live_progress(
                         phase="INFERENCE",
                         active_zone=side_name,
@@ -1423,13 +1759,20 @@ def run_cycle(
                         total_images=len(sides_to_run),
                         message=f"Inference failed for {side_name}",
                     )
+
                     print(
                         f"[MAIN][ERROR] inference failed | "
                         f"side={side_name} | error={e}"
                     )
 
     else:
-        for side_name in sides_to_run:
+        for side_name in remaining_sides:
+            anchor_for_side = (
+                sidewall_r_anchor
+                if side_name in non_r_sides
+                else None
+            )
+
             _, result = _run_one_side_infer(
                 side_name,
                 image_map[side_name],
@@ -1438,6 +1781,7 @@ def run_cycle(
                 r_gpu_sem,
                 vit_gpu_sem,
                 yolo_gpu_sem,
+                sidewall_r_anchor=anchor_for_side,
             )
 
             side_results[side_name] = result
@@ -1452,12 +1796,8 @@ def run_cycle(
     total_vit = sum(float(r.get("vit_time", 0) or 0) for r in side_results.values())
     total_yolo = sum(float(r.get("yolo_time", 0) or 0) for r in side_results.values())
 
-    if any(
-        "align_time" in r or "vit_time" in r or "yolo_time" in r
-        for r in side_results.values()
-    ):
-        seq_total = total_align + total_vit + total_yolo
-        speedup = round(seq_total / cycle_latency_sec, 2) if cycle_latency_sec > 0 else 0
+    seq_total = total_align + total_vit + total_yolo
+    speedup = round(seq_total / cycle_latency_sec, 2) if cycle_latency_sec > 0 else 0
 
     rows = []
 
@@ -1498,7 +1838,8 @@ def run_cycle(
 
     print(
         f"[MAIN FINAL] {cycle_id} -> {final_tire_label} | "
-        f"cycle_time={cycle_latency_sec:.3f}s"
+        f"cycle_time={cycle_latency_sec:.3f}s | "
+        f"stage_sum={seq_total:.3f}s | speedup={speedup}x"
     )
 
     return {
@@ -1506,8 +1847,12 @@ def run_cycle(
         "sku_name": sku_name,
         "tyre_name": tyre_name,
         "final_label": final_tire_label,
+        "final_tire_label": final_tire_label,
         "cycle_latency_sec": cycle_latency_sec,
+        "stage_sum_sec": round(seq_total, 3),
+        "estimated_speedup": speedup,
         "side_results": side_results,
+        "output_dir": cycle_dir,
         "image_map": image_map,
         "cycle_dir": cycle_dir,
     }

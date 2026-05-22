@@ -55,6 +55,10 @@ try:
 except Exception:
     from src.models.Pipeline.checkpoint import load_checkpoint
 
+from src.models.Pipeline.R_inner_mapping_alignment import (
+    extract_sidewall_r_anchor_from_meta,
+)
+
 # =========================================================
 # CONFIG
 # =========================================================
@@ -141,8 +145,8 @@ COVER_EDGES = True
 
 # first N -> map/reference bank
 # next N -> threshold calibration
-MAP_IMAGE_COUNT = 15
-THRESH_IMAGE_COUNT = 25
+MAP_IMAGE_COUNT = 2
+THRESH_IMAGE_COUNT = 1
 
 # patchwise threshold settings
 LOCAL_PERCENTILE = 99.0
@@ -183,7 +187,7 @@ RC_RE = re.compile(r"__r(\d+)_c(\d+)\.(png|jpg|jpeg|bmp|tif|tiff)$", re.IGNORECA
 # =========================================================
 # DEFECTIVE CALIB IMAGE SUPPORT
 # =========================================================
-USE_DEFECT_CALIB_IMAGES = True
+USE_DEFECT_CALIB_IMAGES = False
 DEFECT_CALIB_PREFIXES = ("def",)   # def1, def2, def3 ...
 
 # Patches to ignore ONLY for def* calibration images
@@ -198,6 +202,10 @@ REMOVE_TOP_OUTLIER_PER_RC = True
 OUTLIER_RATIO = 1.8  # remove largest if largest > 1.8 * second_largest
 
 LOCAL_PERCENTILE_AFTER_CLEAN = 99.0
+
+SIDE_NAME = "sidewall1"
+SIDE_LABEL_PREFIX = "SW1"
+ENABLE_YOLO_DIMENSIONS = False
 
 # =========================================================
 # UTILITIES
@@ -1291,203 +1299,6 @@ def build_patchwise_thresholds_simple(
 
 
 # =========================================================
-# SIDEWALL DEFECT DIMENSIONS
-# =========================================================
-def normalize_tyre_name_for_dimensions(tyre_name):
-    if tyre_name is None:
-        return None
-
-    norm = re.sub(r"[^0-9R]", "", str(tyre_name).upper())
-    return norm or None
-
-def tyre_bboxes(img_path):
-    """
-    Find outer tyre bounding box from thresholded image.
-    Returns x, y, w, h, area
-    """
-    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        raise ValueError(f"Could not read image: {img_path}")
-
-    img_blur = cv2.medianBlur(img, 5)
-    _, th1 = cv2.threshold(img_blur, 15, 255, cv2.THRESH_BINARY)
-
-    contours, _ = cv2.findContours(th1, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-    if not contours:
-        raise ValueError(f"No contours found in image: {img_path}")
-
-    cnt = sorted(contours, key=cv2.contourArea, reverse=True)
-    x, y, w, h = cv2.boundingRect(cnt[0])
-    area = w * h
-
-    print(f"[TYRE BOX] {os.path.basename(img_path)} -> x:{x}, y:{y}, w:{w}, h:{h}, area:{area}")
-    return x, y, w, h, area
-
-def save_tyre_bbox_debug_image(img_path, save_path, bbox):
-    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        print(f"[TYRE BOX][WARN] could not read for debug save: {img_path}")
-        return
-
-    vis = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-    x, y, w, h, area = bbox
-    cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 0, 255), 2)
-    cv2.putText(
-        vis,
-        f"x={x}, y={y}, w={w}, h={h}, area={area}",
-        (10, max(25, y - 10)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (0, 0, 255),
-        2,
-        cv2.LINE_AA,
-    )
-
-    cv2.imwrite(save_path, vis)
-    print(f"[TYRE BOX][SAVE] {save_path}")
-
-def enrich_sidewall_yolo_df_with_dimensions(seg_df, crop_path, tyre_name, debug_save_dir=None):
-    dim_summary = {
-        "tyre_name": tyre_name,
-        "tyre_name_normalized": None,
-        "dimensioned_detections": 0,
-        "max_defect_height_mm": None,
-        "max_defect_width_mm": None,
-        "max_defect_area_mm2": None,
-        "sum_defect_area_mm2": None,
-    }
-
-    if seg_df is None or len(seg_df) == 0:
-        return seg_df, dim_summary
-
-    if crop_path is None or not os.path.isfile(crop_path):
-        print("[DIM][WARN] crop_path missing, skipping sidewall dimension calculation")
-        return seg_df, dim_summary
-
-    tyre_name_normalized = normalize_tyre_name_for_dimensions(tyre_name)
-    dim_summary["tyre_name_normalized"] = tyre_name_normalized
-
-    if not tyre_name_normalized:
-        print("[DIM][WARN] tyre_name missing, skipping sidewall dimension calculation")
-        return seg_df, dim_summary
-
-    try:
-        sidewall_width_mm, sidewall_height_mm, sidewall_area_mm2 = sidewall_dimensions(tyre_name_normalized)
-    except Exception as e:
-        print(f"[DIM][WARN] failed parsing tyre_name={tyre_name}: {e}")
-        return seg_df, dim_summary
-
-    crop_gray = cv2.imread(crop_path, cv2.IMREAD_GRAYSCALE)
-    if crop_gray is None:
-        print(f"[DIM][WARN] failed to read crop_path={crop_path}")
-        return seg_df, dim_summary
-
-    crop_h, crop_w = int(crop_gray.shape[0]), int(crop_gray.shape[1])
-
-    try:
-        x, y, w, h, area = tyre_bboxes(crop_path)
-        tyre_box = {"x": x, "y": y, "w": w, "h": h, "area": area}
-        base_w = max(int(w), 1)
-        base_h = max(int(h), 1)
-        total_pix = max(int(area), 1)
-        dimension_basis = "tyre_bbox"
-    except Exception as e:
-        print(f"[DIM][WARN] tyre bbox not found, using full crop fallback | {e}")
-        base_w = max(crop_w, 1)
-        base_h = max(crop_h, 1)
-        total_pix = max(int(crop_h * crop_w), 1)
-        dimension_basis = "full_crop_fallback"
-        tyre_box = {"x": 0, "y": 0, "w": crop_w, "h": crop_h, "area": total_pix}
-
-    if debug_save_dir is not None:
-        os.makedirs(debug_save_dir, exist_ok=True)
-        debug_path = os.path.join(debug_save_dir, "tyre_bbox_debug.png")
-        save_tyre_bbox_debug_image(
-            crop_path,
-            debug_path,
-            (tyre_box["x"], tyre_box["y"], tyre_box["w"], tyre_box["h"], tyre_box["area"]),
-        )
-
-    out_df = seg_df.copy()
-    out_df["tyre_name"] = str(tyre_name)
-    out_df["tyre_name_normalized"] = str(tyre_name_normalized)
-
-    out_df["crop_width_px"] = crop_w
-    out_df["crop_height_px"] = crop_h
-    out_df["crop_area_px"] = int(crop_h * crop_w)
-
-    out_df["dimension_basis"] = dimension_basis
-    out_df["tyre_bbox_x_px"] = int(tyre_box["x"])
-    out_df["tyre_bbox_y_px"] = int(tyre_box["y"])
-    out_df["tyre_bbox_width_px"] = int(tyre_box["w"])
-    out_df["tyre_bbox_height_px"] = int(tyre_box["h"])
-    out_df["tyre_bbox_area_px"] = int(tyre_box["area"])
-
-    out_df["sidewall_width_mm"] = float(sidewall_width_mm)
-    out_df["sidewall_height_mm"] = float(sidewall_height_mm)
-    out_df["sidewall_area_mm2"] = float(sidewall_area_mm2)
-
-    out_df["bbox_width_px"] = (out_df["bbox_x2_px"] - out_df["bbox_x1_px"]).clip(lower=0).astype(float)
-    out_df["bbox_height_px"] = (out_df["bbox_y2_px"] - out_df["bbox_y1_px"]).clip(lower=0).astype(float)
-    out_df["bbox_area_px"] = (out_df["bbox_width_px"] * out_df["bbox_height_px"]).astype(float)
-
-    out_df["global_bbox_x1_px"] = (out_df["c"].astype(float) * BIG_PATCH_W) + out_df["bbox_x1_px"].astype(float)
-    out_df["global_bbox_y1_px"] = (out_df["r"].astype(float) * BIG_PATCH_H) + out_df["bbox_y1_px"].astype(float)
-    out_df["global_bbox_x2_px"] = (out_df["c"].astype(float) * BIG_PATCH_W) + out_df["bbox_x2_px"].astype(float)
-    out_df["global_bbox_y2_px"] = (out_df["r"].astype(float) * BIG_PATCH_H) + out_df["bbox_y2_px"].astype(float)
-
-    defect_height_mm = []
-    defect_width_mm = []
-    defect_diag_mm = []
-    defect_area_mm2 = []
-
-    for _, row in out_df.iterrows():
-        rdlen_mm, rdwid_mm = cor_sw(
-            iwid=base_w,
-            ilen=base_h,
-            dwid=float(row["bbox_width_px"]),
-            dlen=float(row["bbox_height_px"]),
-            sidewallHeight=sidewall_height_mm,
-            sidewallWidth=sidewall_width_mm,
-        )
-
-        area_mm2 = area_defect_sw(
-            t_pix=total_pix,
-            d_pix=float(row["bbox_area_px"]),
-            areaOfSidewall=sidewall_area_mm2,
-        )
-
-        defect_height_mm.append(float(rdlen_mm))
-        defect_width_mm.append(float(rdwid_mm))
-        defect_diag_mm.append(float(np.hypot(rdlen_mm, rdwid_mm)))
-        defect_area_mm2.append(float(area_mm2))
-
-    out_df["defect_height_mm"] = np.round(defect_height_mm, DEFECT_DIMENSION_DECIMALS)
-    out_df["defect_width_mm"] = np.round(defect_width_mm, DEFECT_DIMENSION_DECIMALS)
-    out_df["defect_diagonal_mm"] = np.round(defect_diag_mm, DEFECT_DIMENSION_DECIMALS)
-    out_df["defect_area_mm2"] = np.round(defect_area_mm2, DEFECT_DIMENSION_DECIMALS)
-
-    dim_summary.update({
-        "dimensioned_detections": int(len(out_df)),
-        "max_defect_height_mm": float(out_df["defect_height_mm"].max()) if len(out_df) else None,
-        "max_defect_width_mm": float(out_df["defect_width_mm"].max()) if len(out_df) else None,
-        "max_defect_area_mm2": float(out_df["defect_area_mm2"].max()) if len(out_df) else None,
-        "sum_defect_area_mm2": float(np.round(out_df["defect_area_mm2"].sum(), DEFECT_DIMENSION_DECIMALS)) if len(out_df) else None,
-    })
-
-    print(
-        f"[DIM] tyre={tyre_name} | normalized={tyre_name_normalized} | "
-        f"basis={dimension_basis} | detections={dim_summary['dimensioned_detections']} | "
-        f"max_h_mm={dim_summary['max_defect_height_mm']} | "
-        f"max_w_mm={dim_summary['max_defect_width_mm']} | "
-        f"max_area_mm2={dim_summary['max_defect_area_mm2']}"
-    )
-
-    return out_df, dim_summary
-
-
-# =========================================================
 # YOLO ONLY ON VIT DEFECT PATCHES
 # =========================================================
 def run_yolo_on_vit_defect_patches(vit_df,save_dir,seg_models,                 # now a dict
@@ -1528,6 +1339,7 @@ def run_yolo_on_vit_defect_patches(vit_df,save_dir,seg_models,                 #
             seg_model,
             patch_paths,
             conf_threshold=conf_threshold,
+            label_prefix=SIDE_LABEL_PREFIX,
         )
 
         for _, row in defect_df.iterrows():
@@ -1537,8 +1349,10 @@ def run_yolo_on_vit_defect_patches(vit_df,save_dir,seg_models,                 #
 
             info = seg_results[path]
 
+            filter_names = info.get("cls_names_raw", info["cls_names"])
+
             if KEEP_SEG_CLASSES is not None:
-                if not any(name in KEEP_SEG_CLASSES for name in info["cls_names"]):
+                if not any(name in KEEP_SEG_CLASSES for name in filter_names):
                     continue
 
             # Combine overlays (first model sets base, others blend)
@@ -1547,10 +1361,14 @@ def run_yolo_on_vit_defect_patches(vit_df,save_dir,seg_models,                 #
             else:
                 cv2.addWeighted(combined_overlay_cache[path], 0.5, info["overlay"], 0.5, 0)
 
-            for box_xyxy, cid, cname, conf in zip(
+            cls_names_raw = info.get("cls_names_raw", info["cls_names"])
+            cls_names_prefixed = info["cls_names"]
+
+            for box_xyxy, cid, cname_raw, cname_prefixed, conf in zip(
                 info.get("boxes_xyxy", []),
                 info["cls_ids"],
-                info["cls_names"],
+                cls_names_raw,
+                cls_names_prefixed,
                 info["confs"],
             ):
                 x1, y1, x2, y2 = box_xyxy
@@ -1560,8 +1378,10 @@ def run_yolo_on_vit_defect_patches(vit_df,save_dir,seg_models,                 #
                     "r": int(row["r"]),
                     "c": int(row["c"]),
                     "distance": float(row["distance"]),
+                    "side": SIDE_NAME,
                     "cls_id": int(cid),
-                    "cls_name": cname,
+                    "cls_name_raw": cname_raw,
+                    "cls_name": cname_prefixed,
                     "cls_conf": float(conf),
                     "bbox_x1_px": float(x1),
                     "bbox_y1_px": float(y1),
@@ -1571,14 +1391,9 @@ def run_yolo_on_vit_defect_patches(vit_df,save_dir,seg_models,                 #
                 })
 
     seg_df = pd.DataFrame(all_seg_rows)
+
     if not seg_df.empty:
-        # Use the appropriate enrichment function (already present in file)
-        seg_df, dim_summary = enrich_sidewall_yolo_df_with_dimensions(   # * = sidewall/innerwall/etc.
-            seg_df=seg_df,
-            crop_path=crop_path,
-            tyre_name=tyre_name,
-            debug_save_dir=None,
-        )
+        print(f"[DIM] Skipping dimension calculation for {SIDE_NAME}; laser measurement will be used.")
 
     # Stitched image using combined overlays
     stitched_path = None
@@ -1636,6 +1451,7 @@ def align_crop_from_preprocessed(
     crop_anchor_ref_path=None,
     crop_anchor_debug_path=None,
     debug_name="",
+    return_meta=False,
 ):
     """
     Pipeline wrapper for R crop + crop-anchor alignment.
@@ -1687,9 +1503,21 @@ def align_crop_from_preprocessed(
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(crop_meta, f, indent=2, default=str)
 
+    if return_meta:
+        return crop_bgr, crop_meta
+
     return crop_bgr
 
-def build_calibration_pipeline(model,r_detector,device,gpu_sem=None,calib_good_dir=None,output_dir=None, ref_image_path=None):
+def build_calibration_pipeline(
+    model,
+    r_detector,
+    device,
+    gpu_sem=None,
+    calib_good_dir=None,
+    output_dir=None,
+    ref_image_path=None,
+    return_anchor_records=False,
+):
     calib_good_dir = calib_good_dir or CALIB_GOOD_DIR
     output_dir = output_dir or OUTPUT_DIR
 
@@ -1757,6 +1585,7 @@ def build_calibration_pipeline(model,r_detector,device,gpu_sem=None,calib_good_d
     os.makedirs(aug_root_dir, exist_ok=True)
 
     processing_items = []
+    sidewall_anchor_records = []
 
     for p in map_raw_paths:
         processing_items.append({
@@ -1803,16 +1632,28 @@ def build_calibration_pipeline(model,r_detector,device,gpu_sem=None,calib_good_d
         f"{name}_crop_anchor_debug.png",
         )
 
-        crop_bgr = align_crop_from_preprocessed(
-            pre_bgr=pre_bgr,
-            ref_pre_bgr=ref_pre_bgr,
-            r_detector=r_detector,
-            save_template_path=template_path,
-            reference_r=reference_r,
-            crop_anchor_ref_path=crop_anchor_ref_path,
-            crop_anchor_debug_path=crop_anchor_debug_path,
-            debug_name=f"CALIB_{name}",
+        crop_bgr, crop_meta = align_crop_from_preprocessed(
+        pre_bgr=pre_bgr,
+        ref_pre_bgr=ref_pre_bgr,
+        r_detector=r_detector,
+        save_template_path=template_path,
+        reference_r=reference_r,
+        crop_anchor_ref_path=crop_anchor_ref_path,
+        crop_anchor_debug_path=os.path.join(single_template_dir, f"{name}_crop_anchor_debug.png"),
+        debug_name=f"CALIB_{SIDE_NAME}_{name}",
+        return_meta=True,
         )
+
+        sidewall_r_anchor = extract_sidewall_r_anchor_from_meta(crop_meta)
+
+        sidewall_anchor_records.append({
+            "index": int(idx),
+            "role": role,
+            "raw_path": raw_path,
+            "stem": base_stem,
+            "sidewall_r_anchor": sidewall_r_anchor,
+            "crop_meta": crop_meta,
+        })
 
         crop_gray = to_gray(crop_bgr)
         cv2.imwrite(crop_path, crop_gray)
@@ -2029,10 +1870,21 @@ def build_calibration_pipeline(model,r_detector,device,gpu_sem=None,calib_good_d
                 "p99": float(np.percentile(vals_np, 99)),
             })
 
-        pd.DataFrame(row_summary_rows).to_csv(
-            os.path.join(summary_dir, "calibration_row_summary.csv"),
-            index=False,
-        )
+        pd.DataFrame(row_summary_rows).to_csv(os.path.join(summary_dir, "calibration_row_summary.csv"),index=False)
+
+        anchor_records_path = os.path.join(art_dir, "sidewall_calibration_r_anchor_records.json")
+
+        with open(anchor_records_path, "w", encoding="utf-8") as f:
+            json.dump(sidewall_anchor_records, f, indent=2, default=str)
+
+        print(f"[SAVE] {anchor_records_path}")
+
+        if return_anchor_records:
+            return {
+                "side": SIDE_NAME,
+                "anchor_records": sidewall_anchor_records,
+                "anchor_records_path": anchor_records_path,
+            }
 
         print("[DONE] calibration pipeline finished")
 
@@ -2068,27 +1920,10 @@ def load_calibration_artifacts_from_dir(
     ref_image_path_override=None,
     calibration_artifact_dir_override=None,
 ):
-    """
-    Artifact loading priority:
-
-    1) If calibration_artifact_dir_override is passed:
-       use it directly.
-       Example:
-       media/calibration/SKU_001/artifacts
-
-    2) Else if ref_image_path_override is passed:
-       use its parent folder.
-
-    3) Else fallback to old AI-team style:
-       output_dir/CALIBRATION_DIR_NAME/artifacts
-    """
-
     if calibration_artifact_dir_override:
         art_dir = calibration_artifact_dir_override
-
     elif ref_image_path_override:
         art_dir = os.path.dirname(ref_image_path_override)
-
     else:
         output_dir = output_dir or OUTPUT_DIR
         calib_root = os.path.join(output_dir, CALIBRATION_DIR_NAME)
@@ -2120,6 +1955,7 @@ def load_calibration_artifacts_from_dir(
 
     reference_bank = torch.load(bank_path, map_location="cpu") if os.path.isfile(bank_path) else {}
     reference_bank_meta = torch.load(meta_path, map_location="cpu") if os.path.isfile(meta_path) else {}
+
     thr_obj = torch.load(thr_path, map_location="cpu")
     mahalanobis_stats = torch.load(mahal_path, map_location="cpu") if os.path.isfile(mahal_path) else None
     pca_artifact = torch.load(pca_path, map_location="cpu") if os.path.isfile(pca_path) else None
@@ -2158,56 +1994,68 @@ def load_runtime(
     load_artifacts=True,
     trt_vit=None,
     use_trt_vit=False,
-
-    # NEW: GUI.py will pass this directly
     calibration_artifact_dir_override=None,
 ):
-    
     output_dir = output_dir_override or OUTPUT_DIR
-    calibration_artifact_dir = None
-    crop_anchor_ref_path = None
     checkpoint_path = checkpoint_path_override or CHECKPOINT_PATH
     yolo_r_path = yolo_r_path_override or YOLO_R_PATH
+
+    calibration_artifact_dir = None
+    crop_anchor_ref_path = None
 
     os.makedirs(output_dir, exist_ok=True)
 
     if device is None:
         device = DEVICE
+
     if device == "cuda" and not torch.cuda.is_available():
         print("[WARN] CUDA not available, using CPU")
         device = "cpu"
 
-    # ---- CHANGED: skip building R-detector if shared one is passed in ----
+    # Sidewall is R side, so R detector is required.
     if r_detector_override is not None:
         r_detector = r_detector_override
-        print("[RUNTIME] using provided R-detector")
+        print("[RUNTIME] using provided shared R-detector")
     else:
-        r_detector = build_r_detector(yolo_r_path, conf=CONF_THRES_R, device=device)
-    # ----------------------------------------------------------------------
+        r_detector = build_r_detector(
+            yolo_r_path,
+            conf=CONF_THRES_R,
+            device=device,
+        )
+        print("[RUNTIME] local R-detector loaded")
 
-        # Model loading
+    # ViT / TRT
     if use_trt_vit and trt_vit is not None:
         model = trt_vit
         print("[RUNTIME] using TensorRT ViT engine")
     else:
-        # IMPORTANT:
-        # If checkpoint_path points to a TensorRT engine, do NOT try to load it with torch.load.
-        # We are deferring TRT attachment until after runtime creation in Maincycle.
         if checkpoint_path and str(checkpoint_path).lower().endswith(".engine"):
-            model = None
-            print("[RUNTIME] deferring ViT model load until TRT engine is attached")
-        else:
-            model = make_model().to(device).eval()
+            raise RuntimeError(
+                "[RUNTIME] checkpoint_path is a TensorRT .engine file, "
+                "but trt_vit was not passed. Check cycle_engine.py TRT loading."
+            )
+
+        model = make_model().to(device).eval()
+
+        if device == "cuda":
             model = model.half()
-            optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
-            load_checkpoint(model, optimizer, checkpoint_path)
-    # ---------------------------------------
+
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=1e-4,
+            weight_decay=1e-4,
+        )
+        load_checkpoint(model, optimizer, checkpoint_path)
+        print(f"[RUNTIME] PyTorch ViT checkpoint loaded: {checkpoint_path}")
 
     patch_transform = _build_transform()
 
-    use_yolo_seg = USE_YOLO_SEG if use_yolo_seg_override is None else bool(use_yolo_seg_override)
+    use_yolo_seg = (
+        USE_YOLO_SEG
+        if use_yolo_seg_override is None
+        else bool(use_yolo_seg_override)
+    )
 
-    # Use dict if provided, else fallback to single override
     if seg_models is not None:
         runtime_seg_models = seg_models
     elif seg_model_override is not None:
@@ -2216,7 +2064,10 @@ def load_runtime(
         runtime_seg_models = {}
         if use_yolo_seg:
             try:
-                runtime_seg_models["default"] = load_yolo_seg(YOLO_SEG_MODEL_PATH, device=device)
+                runtime_seg_models["default"] = load_yolo_seg(
+                    YOLO_SEG_MODEL_PATH,
+                    device=device,
+                )
                 print("[YOLO] segmentation model loaded")
             except Exception as e:
                 print(f"[YOLO][WARN] failed to load model: {e}")
@@ -2248,8 +2099,9 @@ def load_runtime(
             raise RuntimeError(
                 "Missing crop_anchor_reference.json. "
                 f"Expected at: {crop_anchor_ref_path}. "
-                "Run calibration once with the updated AI team crop-anchor logic."
+                "Run calibration once with updated sidewall crop-anchor logic."
             )
+
     else:
         ref_pre_bgr = None
         reference_r = None
@@ -2262,26 +2114,34 @@ def load_runtime(
         pca_artifact = None
 
         calibration_artifact_dir = calibration_artifact_dir_override
+
         if calibration_artifact_dir:
             crop_anchor_ref_path = os.path.join(
                 calibration_artifact_dir,
                 CROP_ANCHOR_REF_NAME,
             )
 
-
     return {
         "device": device,
         "model": model,
         "patch_transform": patch_transform,
+
         "r_detector": r_detector,
-        "seg_models": runtime_seg_models, 
+        "seg_models": runtime_seg_models,
         "use_yolo_seg": use_yolo_seg,
+
         "output_dir": output_dir,
         "checkpoint_path": checkpoint_path,
         "yolo_r_path": yolo_r_path,
         "ref_image_path_override": ref_image_path_override,
         "tyre_name": tyre_name_override,
+
+        "calibration_artifact_dir": calibration_artifact_dir,
+        "crop_anchor_ref_path": crop_anchor_ref_path,
+
         "ref_pre_bgr": ref_pre_bgr,
+        "reference_r": reference_r,
+
         "reference_bank": reference_bank,
         "reference_bank_meta": reference_bank_meta,
         "thresholds_by_rc": thresholds_by_rc,
@@ -2289,11 +2149,10 @@ def load_runtime(
         "sigma_by_rc": sigma_by_rc,
         "mahalanobis_stats": mahalanobis_stats,
         "pca_artifact": pca_artifact,
-        "reference_r": reference_r,
-        "use_trt_vit": (trt_vit is not None and use_trt_vit),   # NEW
-        "calibration_artifact_dir": calibration_artifact_dir,
-        "crop_anchor_ref_path": crop_anchor_ref_path,
+
+        "use_trt_vit": bool(use_trt_vit and trt_vit is not None),
     }
+
 
 def warmup_runtime(runtime):
     import tempfile

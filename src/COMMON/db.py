@@ -29,7 +29,10 @@ NEW_SKU_META_COLLECTION = "New SKU"
 ACCOUNTS_COLLECTION_NAME = "Accounts"
 REPEATABILITY_COLLECTION = "Repeatability"
 TEST_MODE_RESULTS_COLLECTION = "Test Mode Results"
-
+ACTION_CODE_CATALOG_COLLECTION = "Action Code Catalog"
+AI_DEFECT_CATALOG_MAP_COLLECTION = "AI Defect Catalog Map"
+ACTION_DECISION_RULES_COLLECTION = "Action Decision Rules"
+INSPECTION_ACTION_DECISIONS_COLLECTION = "Inspection Action Decisions"
 
 # =========================
 # SINGLETON CLIENT
@@ -62,7 +65,20 @@ def ensure_collection(collection_name: str, db_name: Optional[str] = None) -> No
     if collection_name not in db.list_collection_names():
         db.create_collection(collection_name)
 
+def get_action_code_catalog_collection():
+    return get_collection(ACTION_CODE_CATALOG_COLLECTION)
 
+
+def get_ai_defect_catalog_map_collection():
+    return get_collection(AI_DEFECT_CATALOG_MAP_COLLECTION)
+
+
+def get_action_decision_rules_collection():
+    return get_collection(ACTION_DECISION_RULES_COLLECTION)
+
+
+def get_inspection_action_decisions_collection():
+    return get_collection(INSPECTION_ACTION_DECISIONS_COLLECTION)
 # =========================
 # FIXED COLLECTION HELPERS
 # =========================

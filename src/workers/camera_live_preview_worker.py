@@ -85,25 +85,28 @@ class CameraLivePreviewWorker(QThread):
             self.error_signal.emit(str(e))
 
     def numpy_to_qimage(self, frame):
-        """
-        Mono16 is normalized only for display.
-        Original saved image remains 16-bit.
-        """
-
+        # 1. Handle 16-bit to 8-bit conversion with smart contrast
         if frame.dtype == np.uint16:
-            display = cv2.normalize(
-                frame,
-                None,
-                0,
-                255,
-                cv2.NORM_MINMAX
-            ).astype(np.uint8)
+            # Use 1st percentile as black and 99th percentile as white
+            # This ignores dead pixels or extreme reflections that ruin contrast
+            p_low = np.percentile(frame, 1)
+            p_high = np.percentile(frame, 99)
+            
+            # Avoid division by zero if the image is flat
+            if p_high <= p_low:
+                p_low = frame.min()
+                p_high = frame.max()
+            
+            # Normalize to 0-255 range
+            display = np.clip((frame - p_low) * (255.0 / (p_high - p_low)), 0, 255).astype(np.uint8)
         else:
+            # 2. Handle 8-bit images directly
             display = frame.astype(np.uint8)
-
+        
+        # 3. Get dimensions for resizing
         h, w = display.shape
-
-        # Resize for GUI speed only.
+        
+        # 4. Resize for performance if the image is too large
         max_w = 1200
         if w > max_w:
             scale = max_w / float(w)
@@ -111,7 +114,8 @@ class CameraLivePreviewWorker(QThread):
             new_h = int(h * scale)
             display = cv2.resize(display, (new_w, new_h), interpolation=cv2.INTER_AREA)
             h, w = display.shape
-
+        
+        # 5. Convert to QImage format
         qimg = QImage(
             display.data,
             w,
@@ -119,5 +123,5 @@ class CameraLivePreviewWorker(QThread):
             w,
             QImage.Format_Grayscale8
         )
-
+        
         return qimg.copy()

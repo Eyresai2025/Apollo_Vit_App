@@ -4,7 +4,6 @@ import os
 import signal
 from datetime import datetime
 from threading import Lock, Event
-import numpy as np # type: ignore
 import pandas as pd # type: ignore
 from PIL import Image, ImageTk # type: ignore
 import cv2 # type: ignore
@@ -12,16 +11,15 @@ import torch # type: ignore
 import warnings
 warnings.filterwarnings("ignore")
 import threading
-from PyQt5.QtWidgets import * # type: ignore
-from PyQt5.QtCore import * # type: ignore
-from PyQt5.QtGui import * # type: ignore
-from PyQt5.QtGui import QPainter, QImageReader # type: ignore
+from PyQt5.QtWidgets import (QApplication,QDialog,QFrame,QHBoxLayout,QLineEdit,QLabel,QMainWindow,QMessageBox,QPushButton,QProgressBar,QScrollArea,
+    QSizePolicy,QStackedWidget,QStatusBar,QToolButton,QVBoxLayout,QWidget,
+)
+from PyQt5.QtCore import (QObject,QEvent,QSize,QThread,QTimer,Qt,pyqtSignal,pyqtSlot,)
+from PyQt5.QtGui import (QGuiApplication,QIcon,QImageReader,QPainter,QPixmap,
+)
 from src.COMMON.db import get_db
-from ultralytics import YOLO # type: ignore
-from sahi import AutoDetectionModel # type: ignore
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
-import torchvision # type: ignore
 import logging
 import subprocess
 import platform
@@ -68,6 +66,9 @@ from src.UI.live_result_ui import (
     apply_tyre_result_to_gui,
 )
 from src.Pages.capture_settings_tab import CameraCaptureSettingsTab
+from src.COMMON.live_sku_resolver import resolve_live_sku_from_plc
+from src.COMMON.plc_gui_commands import PlcGuiCommandService
+
 os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
 os.environ["QT_DEVICE_PIXEL_RATIO"] = "0"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
@@ -163,26 +164,43 @@ BAR_CODE_DIR = os.path.join(MEDIA_PATH, "barcode_images")
 TEST_MODE_REPORTS = os.path.join(MEDIA_PATH, "TestMode Reports")
 
 def get_available_sku_names(media_root):
-    """
-    Final calibration structure:
-        media/AI_Calibration_Files/<SKU>/calibration_sidewall1/artifacts
-        media/AI_Calibration_Files/<SKU>/calibration_sidewall2/artifacts
-        media/AI_Calibration_Files/<SKU>/calibration_innerwall/artifacts
-        media/AI_Calibration_Files/<SKU>/calibration_tread/artifacts
-        media/AI_Calibration_Files/<SKU>/calibration_bead/artifacts
-    """
     calibration_root = os.path.join(media_root, "AI_Calibration_Files")
 
     if not os.path.isdir(calibration_root):
         return []
 
-    required_side_dirs = [
-        "calibration_sidewall1",
-        "calibration_sidewall2",
-        "calibration_innerwall",
-        "calibration_tread",
-        "calibration_bead",
-    ]
+    required_files_by_side = {
+        "calibration_sidewall1": [
+            "alignment_reference_polarized.png",
+            "crop_anchor_reference.json",
+            "embedding_bank.pt",
+            "embedding_bank_meta.pt",
+            "thresholds_by_rc.pt",
+            "mahalanobis_stats.pt",
+            "pca_artifact.pt",
+            "reference_r.pt",
+        ],
+        "calibration_sidewall2": [
+            "alignment_reference_polarized.png",
+            "crop_anchor_reference.json",
+            "embedding_bank.pt",
+            "embedding_bank_meta.pt",
+            "thresholds_by_rc.pt",
+            "mahalanobis_stats.pt",
+            "pca_artifact.pt",
+            "reference_r.pt",
+        ],
+        "calibration_tread": [
+            "embedding_bank.pt",
+            "embedding_bank_meta.pt",
+            "thresholds_by_rc.pt",
+            "mahalanobis_stats.pt",
+            "pca_artifact.pt",
+            "tread_x_reference_crop.png",
+            "tread_x_reference_signature.npy",
+            "tread_x_reference_signature_meta.json",
+        ],
+    }
 
     sku_names = []
 
@@ -197,22 +215,12 @@ def get_available_sku_names(media_root):
 
         ok = True
 
-        for side_dir_name in required_side_dirs:
+        for side_dir_name, required_files in required_files_by_side.items():
             artifacts_dir = os.path.join(sku_dir, side_dir_name, "artifacts")
 
             if not os.path.isdir(artifacts_dir):
                 ok = False
                 break
-
-            required_files = [
-                "alignment_reference_polarized.png",
-                "embedding_bank.pt",
-                "embedding_bank_meta.pt",
-                "thresholds_by_rc.pt",
-                "mahalanobis_stats.pt",
-                "pca_artifact.pt",
-                "reference_r.pt",
-            ]
 
             for file_name in required_files:
                 if not os.path.isfile(os.path.join(artifacts_dir, file_name)):
@@ -776,7 +784,10 @@ class MainWindow(QMainWindow):
         
         # UI responsiveness tracker
         self._last_ui_update = time.time()
-        
+        self.plc_gui_command_service = PlcGuiCommandService(
+            env_path=ENV_PATH,
+            parent=self,
+        )
         # Setup UI
         self.setup_ui()
         self.load_startup_images()
@@ -848,7 +859,34 @@ class MainWindow(QMainWindow):
         status_bar.setStyleSheet("background-color: white;")
         status_bar.setSizeGripEnabled(False)
         self.setStatusBar(status_bar)
-        
+        self.plc_gui_command_service.started.connect(
+            lambda name, address: self.statusBar().showMessage(
+                f"{name}: sending pulse to {address}..."
+            )
+        )
+
+        self.plc_gui_command_service.success.connect(
+            lambda name, address: self.statusBar().showMessage(
+                f"{name}: pulse completed at {address}"
+            )
+        )
+
+        self.plc_gui_command_service.error.connect(
+            lambda name, address, msg: QMessageBox.critical(
+                self,
+                "PLC Command Error",
+                f"{name} failed at {address}\n\n{msg}",
+            )
+        )
+
+        self.plc_gui_command_service.busy_changed.connect(
+            lambda busy: (
+                getattr(self, "auto_start_btn", None)
+                and self.auto_start_btn.setEnabled(not busy),
+                getattr(self, "servo_reset_btn", None)
+                and self.servo_reset_btn.setEnabled(not busy),
+            )
+        )
         self.copy_full_text = (
             "Copyright © Radome Technologies and Services Pvt Ltd | "
             "All Rights Reserved | Our privacy policy | www.radometechnologies.com | "
@@ -1102,17 +1140,54 @@ class MainWindow(QMainWindow):
             logger.error(f"Error displaying images: {e}")
     
     # ========================================================================
-    # LIVE INSPECTION WITH THREAD SAFETY    # ========================================================================
+    # LIVE INSPECTION WITH THREAD SAFETY    
+    # ========================================================================
     
     def open_live_selection_dialog(self):
-        self.refresh_available_skus()
-        
+        """
+        Live flow:
+        - Test Mode must already be completed.
+        - Read active recipe number from PLC.
+        - Map recipe number to SKU_XXX.
+        - User enters only tyre number.
+        - Start Live with resolved SKU.
+        """
+
+        if str(deployment) == "True" and not is_hardware_ready():
+            QMessageBox.warning(
+                self,
+                "Test Mode Required",
+                "Please open Test Mode and complete the Full Hardware Check before starting Live Inspection.",
+            )
+            return
+
+        hardware_state = get_hardware_state()
+        plc_client_from_test = hardware_state.get("plc_client")
+
+        try:
+            resolved = resolve_live_sku_from_plc(
+                plc_client=plc_client_from_test,
+                media_path=MEDIA_PATH,
+                env_path=ENV_PATH,
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Active Recipe Error",
+                f"Could not resolve SKU from PLC active recipe.\n\n{e}",
+            )
+            return
+
+        recipe_number = resolved["recipe_number"]
+        sku_name = resolved["sku_name"]
+        plc_tag = resolved["tag"]
+
         dialog = QDialog(self)
         dialog.setWindowTitle("Live Inspection")
-        dialog.resize(self.s(500), self.s(380))
+        dialog.resize(self.s(520), self.s(330))
         dialog.setWindowIcon(QIcon(os.path.join(MEDIA_PATH, "img/smartQC-.ico")))
         dialog.setModal(True)
-        
+
         dialog.setStyleSheet("""
             QDialog { background: #f8f9fa; }
             QFrame#Card {
@@ -1123,70 +1198,17 @@ class MainWindow(QMainWindow):
             QLabel#Title {
                 font: 700 18px 'Segoe UI';
                 color: #1a1a2e;
-                letter-spacing: 0.5px;
             }
             QLabel#FieldLabel {
                 font: 600 13px 'Segoe UI';
                 color: #4a5568;
-                margin-bottom: 4px;
             }
-            QComboBox {
-                min-height: 44px;
-                background: white;
-                border: 2px solid #e2e8f0;
-                border-radius: 12px;
-                padding: 0 12px;
-                font: 500 13px 'Segoe UI';
-                color: #2d3748;
-                selection-background-color: transparent;
-            }
-            QComboBox:hover {
-                border: 2px solid #571c86;
-                background: #faf5ff;
-            }
-            QComboBox:focus {
-                border: 2px solid #571c86;
-                background: white;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 30px;
-                border: none;
-                background: transparent;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid #571c86;
-                margin-right: 12px;
-            }
-            QComboBox QAbstractItemView {
-                background: white;
-                border: 2px solid #e2e8f0;
-                border-radius: 12px;
-                padding: 8px 0;
-                margin-top: 4px;
-                outline: 0px;
-                selection-background-color: #f3e8ff;
-                selection-color: #571c86;
-            }
-            QComboBox QAbstractItemView::item {
-                min-height: 40px;
-                padding: 8px 16px;
-                margin: 2px 8px;
-                border-radius: 8px;
-                font: 500 13px 'Segoe UI';
-                color: #2d3748;
-            }
-            QComboBox QAbstractItemView::item:hover {
+            QLabel#SkuBadge {
                 background: #f3e8ff;
                 color: #571c86;
-            }
-            QComboBox QAbstractItemView::item:selected {
-                background: #f3e8ff;
-                color: #571c86;
+                border-radius: 12px;
+                padding: 12px;
+                font: 800 13px 'Segoe UI';
             }
             QLineEdit {
                 min-height: 44px;
@@ -1197,14 +1219,6 @@ class MainWindow(QMainWindow):
                 font: 500 13px 'Segoe UI';
                 color: #2d3748;
             }
-            QLineEdit:hover {
-                border: 2px solid #571c86;
-                background: #faf5ff;
-            }
-            QLineEdit:focus {
-                border: 2px solid #571c86;
-                background: white;
-            }
             QPushButton#CancelBtn {
                 min-height: 44px;
                 background: white;
@@ -1214,92 +1228,52 @@ class MainWindow(QMainWindow):
                 color: #4a5568;
                 padding: 0 24px;
             }
-            QPushButton#CancelBtn:hover {
-                background: #f7fafc;
-                border-color: #cbd5e0;
-            }
             QPushButton#StartBtn {
                 min-height: 44px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #571c86, stop:1 #6b2aa3);
+                background: #571c86;
                 border: none;
                 border-radius: 12px;
                 font: 600 13px 'Segoe UI';
                 color: white;
                 padding: 0 32px;
             }
-            QPushButton#StartBtn:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #6b2aa3, stop:1 #7b31be);
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: #f1f5f9;
-                width: 8px;
-                border-radius: 4px;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background: #cbd5e0;
-                border-radius: 4px;
-                min-height: 20px;
-            }
         """)
-        
+
         root = QVBoxLayout(dialog)
         root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(16)
-        
+
         card = QFrame()
         card.setObjectName("Card")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(28, 28, 28, 28)
-        card_layout.setSpacing(20)
-        
+        card_layout.setSpacing(16)
+
         title_label = QLabel("Start Live Inspection")
         title_label.setObjectName("Title")
         title_label.setAlignment(Qt.AlignCenter)
         card_layout.addWidget(title_label)
-        
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setStyleSheet("background-color: #e2e8f0; max-height: 1px; margin: 4px 0;")
-        card_layout.addWidget(separator)
-        
-        sku_label = QLabel("Select SKU")
-        sku_label.setObjectName("FieldLabel")
-        card_layout.addWidget(sku_label)
-        
-        sku_combo = QComboBox()
-        sku_combo.setEditable(True)
-        sku_combo.setInsertPolicy(QComboBox.NoInsert)
-        sku_combo.lineEdit().setPlaceholderText("Search or select SKU...")
-        sku_combo.setMinimumHeight(self.s(44))
-        
-        if self.available_skus:
-            sku_combo.addItems(self.available_skus)
-            completer = QCompleter(self.available_skus)
-            completer.setCaseSensitivity(Qt.CaseInsensitive)
-            completer.setFilterMode(Qt.MatchContains)
-            sku_combo.setCompleter(completer)
-            if self.selected_live_sku and self.selected_live_sku in self.available_skus:
-                sku_combo.setCurrentText(self.selected_live_sku)
-        
-        card_layout.addWidget(sku_combo)
-        
+
+        sku_badge = QLabel(
+            f"PLC Active Recipe: {recipe_number}\n"
+            f"PLC Tag: {plc_tag}\n"
+            f"Resolved AI SKU: {sku_name}"
+        )
+        sku_badge.setObjectName("SkuBadge")
+        sku_badge.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(sku_badge)
+
         tyre_label = QLabel("Tyre Number")
         tyre_label.setObjectName("FieldLabel")
         card_layout.addWidget(tyre_label)
-        
+
         tyre_edit = QLineEdit()
         tyre_edit.setPlaceholderText("Enter tyre number / tyre name")
-        tyre_edit.setText(self.selected_live_tyre_name or "195_65_R15")
+        tyre_edit.setText(self.selected_live_tyre_name or "")
         tyre_edit.setMinimumHeight(self.s(44))
         card_layout.addWidget(tyre_edit)
-        
-        card_layout.addStretch()
-        
-        info_badge = QLabel("ℹ️ Ensure tyre is properly positioned before starting")
+
+        info_badge = QLabel("AI files will be loaded based on PLC active recipe.")
+        info_badge.setAlignment(Qt.AlignCenter)
         info_badge.setStyleSheet("""
             QLabel {
                 font: 500 11px 'Segoe UI';
@@ -1309,58 +1283,39 @@ class MainWindow(QMainWindow):
                 border-radius: 8px;
             }
         """)
-        info_badge.setAlignment(Qt.AlignCenter)
         card_layout.addWidget(info_badge)
-        
+
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(16)
-        
+
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setObjectName("CancelBtn")
-        cancel_btn.setCursor(Qt.PointingHandCursor)
         cancel_btn.clicked.connect(dialog.reject)
-        
-        start_btn = QPushButton("▶ Start Inspection")
+
+        start_btn = QPushButton("▶ Load & Prepare")
         start_btn.setObjectName("StartBtn")
-        start_btn.setCursor(Qt.PointingHandCursor)
-        
+
         def proceed():
-            sku_name = sku_combo.currentText().strip()
             tyre_name = tyre_edit.text().strip()
-            
-            if not sku_name or sku_name == "No SKU Available":
-                QMessageBox.warning(dialog, "SKU Error", "Please select a valid SKU.")
-                return
-            
-            if sku_name not in self.available_skus:
-                reply = QMessageBox.question(
-                    dialog, "New SKU Detected",
-                    f"SKU '{sku_name}' not found in calibration.\n\nWould you like to create a new SKU?",
-                    QMessageBox.Yes | QMessageBox.No
-                )
-                if reply == QMessageBox.Yes:
-                    dialog.accept()
-                    self.run_new_sku()
-                return
-            
+
             if not tyre_name:
                 QMessageBox.warning(dialog, "Tyre Number", "Please enter tyre number.")
                 return
-            
+
             dialog.accept()
+
             self.update_live_info_cards(sku_name, tyre_name)
             self.begin_live_flow(sku_name, tyre_name)
-        
+
         start_btn.clicked.connect(proceed)
-        
+
         button_layout.addStretch()
         button_layout.addWidget(cancel_btn)
         button_layout.addWidget(start_btn)
         button_layout.addStretch()
-        
+
         card_layout.addLayout(button_layout)
         root.addWidget(card)
-        
+
         dialog.exec_()
     
     def validate_selected_sku_calibration(self, sku_name):
@@ -1378,12 +1333,18 @@ class MainWindow(QMainWindow):
             )
             return False
 
+        # required_side_dirs = [
+        #     "calibration_sidewall1",
+        #     "calibration_sidewall2",
+        #     "calibration_innerwall",
+        #     "calibration_tread",
+        #     "calibration_bead",
+        # ]
+
         required_side_dirs = [
             "calibration_sidewall1",
             "calibration_sidewall2",
-            "calibration_innerwall",
             "calibration_tread",
-            "calibration_bead",
         ]
 
         missing = []
@@ -1432,7 +1393,7 @@ class MainWindow(QMainWindow):
         globals()["multi_cam"] = hardware_state.get("multi_cam")
         globals()["plc_client"] = hardware_state.get("plc_client")
 
-        if deployment == "True" and CAMERA_CAPTURE_ENABLED:
+        if str(deployment) == "True" and CAMERA_CAPTURE_ENABLED:
             self.start_continuous_inspection(sku_name, tyre_name)
         else:
             if self.thread_manager.active_threads.get("inspection"):
@@ -1461,13 +1422,20 @@ class MainWindow(QMainWindow):
         
         self.stop_continuous_inspection()
         
+        active_sides = ["sidewall1", "sidewall2", "tread"]
+        capture_sides = [
+            "sidewall1",
+            "sidewall2",
+            "innerwall",
+            "tread",
+            # "bead",
+        ]
+
         self.continuous_worker = start_continuous_cycle(
             media_root=MEDIA_PATH,
             sku_name=sku_name,
             tyre_name=tyre_name,
             multi_camera_manager=self.multi_cam,
-            plc_interface=plc_client,
-            plc_trigger_tag="DB100.DBX0.0",
             min_capture_interval=2.0,
             seg_model_a_path=MAIN_SEG_MODEL_PATH,
             seg_model_b_path=MAIN_SEG_MODEL_PATH,
@@ -1475,8 +1443,20 @@ class MainWindow(QMainWindow):
             r_detector_path=MAIN_R_DETECTOR_PATH,
             device="cuda" if TORCH_GPU_OK else "cpu",
             auto_preload=True,
+            sides_to_run=active_sides,
+            capture_sides=capture_sides,
         )
-        
+        def on_ready_for_inspection(message):
+            QMessageBox.information(
+                self,
+                "Ready for Inspection",
+                message,
+            )
+
+            if self.continuous_worker:
+                self.continuous_worker.confirm_ready_to_start()
+
+        self.continuous_worker.ready_for_inspection.connect(on_ready_for_inspection)
         self.continuous_worker.status_update.connect(
             lambda msg: self.statusBar().showMessage(msg)
         )
@@ -1496,12 +1476,12 @@ class MainWindow(QMainWindow):
         reset_live_result()
         apply_tyre_result_to_gui(self)
 
-        reset_live_progress(total_images=len(self.side_order))
+        reset_live_progress(total_images=len(active_sides))
         set_live_progress(
             phase="WAITING",
             active_zone="-",
             images_captured=0,
-            total_images=len(self.side_order),
+            total_images=len(active_sides),
             message="Continuous inspection started. Waiting for trigger.",
         )
         apply_live_progress_to_gui(self)
@@ -1833,14 +1813,17 @@ class MainWindow(QMainWindow):
         # Get the already-connected PLC client from Test Mode hardware check
         hardware_state = get_hardware_state()
         shared_plc_client = hardware_state.get("plc_client")
+        shared_multi_cam = hardware_state.get("multi_cam")
 
         # If New SKU page already exists, reuse same page
         if getattr(self, "new_sku_capture_page", None) is not None:
             self.new_sku_capture_page.set_sku_meta(sku_meta)
 
-            # Update shared PLC client also, in case Test Mode was run after page creation
             if hasattr(self.new_sku_capture_page, "set_plc_client"):
                 self.new_sku_capture_page.set_plc_client(shared_plc_client)
+
+            if hasattr(self.new_sku_capture_page, "set_multi_camera_manager"):
+                self.new_sku_capture_page.set_multi_camera_manager(shared_multi_cam)
 
             self.content_stack.setCurrentWidget(self.new_sku_capture_page)
 
@@ -1861,6 +1844,7 @@ class MainWindow(QMainWindow):
             sku_meta=sku_meta,
             on_close=self.handle_back_to_dashboard,
             plc_client=shared_plc_client,   # important
+            multi_camera_manager=shared_multi_cam,
         )
 
         self.content_stack.addWidget(self.new_sku_capture_page)
@@ -1936,6 +1920,19 @@ class MainWindow(QMainWindow):
         h.addWidget(time_box)
         h.addStretch()
 
+        self.live_system_status_label = QLabel("System: NOT READY")
+        self.live_system_status_label.setAlignment(Qt.AlignCenter)
+        self.live_system_status_label.setStyleSheet("""
+            QLabel {
+                background: #eeeeee;
+                color: #333333;
+                border-radius: 10px;
+                padding: 6px 12px;
+                font: 800 12px 'Segoe UI';
+            }
+        """)
+        h.addWidget(self.live_system_status_label)
+
         self.mode_indicator_label = QLabel("Mode: UNKNOWN")
         self.mode_indicator_label.setAlignment(Qt.AlignCenter)
         self.mode_indicator_label.setStyleSheet("""
@@ -1949,19 +1946,50 @@ class MainWindow(QMainWindow):
         """)
         h.addWidget(self.mode_indicator_label)
 
-        self.live_system_status_label = QLabel("System: NOT READY")
-        self.live_system_status_label.setAlignment(Qt.AlignCenter)
-        self.live_system_status_label.setStyleSheet("""
-            QLabel {
-                background: #eeeeee;
-                color: #333333;
-                border-radius: 10px;
-                padding: 6px 12px;
-                font: 800 12px 'Segoe UI';
-            }
-        """)
-        h.addWidget(self.live_system_status_label)
-        
+        def make_header_command_button(text, bg, hover):
+            b = QToolButton()
+            b.setText(text)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            b.setStyleSheet(f"""
+                QToolButton {{
+                    font: 800 12px 'Segoe UI';
+                    color: white;
+                    background-color: {bg};
+                    border: none;
+                    border-radius: 8px;
+                    padding: 6px 12px;
+                }}
+                QToolButton:hover {{
+                    background-color: {hover};
+                }}
+                QToolButton:disabled {{
+                    background-color: #999999;
+                    color: #eeeeee;
+                }}
+            """)
+            return b
+
+        self.auto_start_btn = make_header_command_button(
+            "Auto Start",
+            "#198754",
+            "#157347",
+        )
+        self.auto_start_btn.clicked.connect(
+            self.plc_gui_command_service.pulse_auto_start
+        )
+        h.addWidget(self.auto_start_btn)
+
+        self.servo_reset_btn = make_header_command_button(
+            "All Servo Reset",
+            "#dc3545",
+            "#bb2d3b",
+        )
+        self.servo_reset_btn.clicked.connect(
+            self.plc_gui_command_service.pulse_all_servo_reset
+        )
+        h.addWidget(self.servo_reset_btn)
+                
         self.back_btn = QToolButton()
         self.back_btn.setText("Back to Live")
         self.back_btn.setIcon(QIcon(os.path.join(MEDIA_PATH, "img/human-machine.png")))

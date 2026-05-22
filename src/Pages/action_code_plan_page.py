@@ -8,7 +8,11 @@ from PyQt5.QtWidgets import (  # type: ignore
     QGraphicsDropShadowEffect
 )
 
-
+from src.COMMON.action_code_catalog_db import (
+    seed_default_action_catalog,
+    get_action_catalog_header,
+    get_action_catalog_sections,
+)
 class ActionCodePlanPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -124,8 +128,9 @@ class ActionCodePlanPage(QWidget):
         return frame
 
     # ---------- Helper: section table ----------
-    def _create_section_table(self, conditions):
-        num_rows = len(conditions) + 1
+    def _create_section_table(self, rows):
+        num_rows = len(rows) + 1
+
         table = QTableWidget(num_rows, 6)  # type: ignore
         table.setHorizontalHeaderLabels([
             "Condition", "Description of condition",
@@ -133,6 +138,7 @@ class ActionCodePlanPage(QWidget):
         ])
         table.verticalHeader().setVisible(False)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)  # type: ignore
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)  # type: ignore
 
         self._style_action_table_variant1(table)
 
@@ -141,25 +147,31 @@ class ActionCodePlanPage(QWidget):
         header.setStretchLastSection(True)
 
         header.resizeSection(0, 90)
-        header.resizeSection(1, 360)
-        header.resizeSection(2, 100)
-        header.resizeSection(3, 110)
+        header.resizeSection(1, 420)
+        header.resizeSection(2, 110)
+        header.resizeSection(3, 130)
         header.resizeSection(4, 120)
-        header.resizeSection(5, 80)
+        header.resizeSection(5, 100)
 
-        for row, (cond_no, desc) in enumerate(conditions):
-            item0 = QTableWidgetItem(cond_no)  # type: ignore
-            item0.setTextAlignment(Qt.AlignCenter)  # type: ignore
-            table.setItem(row, 0, item0)
+        for row_index, row_doc in enumerate(rows):
+            values = [
+                str(row_doc.get("condition_code", "")),
+                str(row_doc.get("description", "")),
+                str(row_doc.get("action_code", "")),
+                str(row_doc.get("classification", "")),
+                str(row_doc.get("replacement", "")),
+                str(row_doc.get("scrap", "")),
+            ]
 
-            item1 = QTableWidgetItem(desc)  # type: ignore
-            item1.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)  # type: ignore
-            table.setItem(row, 1, item1)
+            for col_index, value in enumerate(values):
+                item = QTableWidgetItem(value)  # type: ignore
 
-            for col in range(2, 6):
-                item = QTableWidgetItem("")  # type: ignore
-                item.setTextAlignment(Qt.AlignCenter)  # type: ignore
-                table.setItem(row, col, item)
+                if col_index == 1:
+                    item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)  # type: ignore
+                else:
+                    item.setTextAlignment(Qt.AlignCenter)  # type: ignore
+
+                table.setItem(row_index, col_index, item)
 
         img_row = num_rows - 1
         table.setRowHeight(img_row, 170)
@@ -312,40 +324,35 @@ class ActionCodePlanPage(QWidget):
         scroll_layout = QVBoxLayout(scroll_content)  # type: ignore
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(12)
+        # ----- load section data from MongoDB -----
+        try:
+            # Safe: if DB is empty, it inserts your current 3 OQC sections.
+            seed_default_action_catalog(force=False)
 
-        # ----- section data -----
-        conditions_101 = [
-            ("", "No blisters in tread"),
-            ("", "Air entrapment between tread and cap strip"),
-            ("", "Air entrapment between tread and steel belt"),
-        ]
-        conditions_102 = [
-            ("", "Rounding of imperfection < 2 mm"),
-            ("", "Length of imperfection ≤ 5 mm"),
-            ("", "Max. 2 imperfections in non-successive blocks"),
-            ("", "More than above"),
-            ("", "5 or more imperfections which are longer than 10mm and rounded 5 mm"),
-        ]
-        conditions_103 = [
-            ("", "Thickness of flash < 0.5 mm"),
-            ("", "Height of flash < 0.5 mm"),
-            ("", "Height of flash between 0.5 mm and 1 mm"),
-            ("", "Height of flash between 1 mm and 1.5 mm"),
-            ("", "More than above"),
-            ("", "*all flash that seals off a groove must be cut"),
-        ]
+            sections = get_action_catalog_sections(revision_no="03")
 
-        sec101 = self.AccordionSection("101", "Tread blisters", default_open=True)
-        sec101.content_layout.addWidget(self._create_section_table(conditions_101))
-        scroll_layout.addWidget(sec101)
+            if not sections:
+                empty_label = QLabel("No Action Code Catalog data found in MongoDB.")  # type: ignore
+                empty_label.setAlignment(Qt.AlignCenter)  # type: ignore
+                empty_label.setStyleSheet("font: 600 13px 'Segoe UI'; color: #dc3545;")
+                scroll_layout.addWidget(empty_label)
+            else:
+                for index, section in enumerate(sections):
+                    sec = self.AccordionSection(
+                        str(section.get("catalog_code", "")),
+                        str(section.get("section_name", "")),
+                        default_open=(index == 0),
+                    )
+                    sec.content_layout.addWidget(
+                        self._create_section_table(section.get("rows", []))
+                    )
+                    scroll_layout.addWidget(sec)
 
-        sec102 = self.AccordionSection("102", "Tread lightness", default_open=False)
-        sec102.content_layout.addWidget(self._create_section_table(conditions_102))
-        scroll_layout.addWidget(sec102)
-
-        sec103 = self.AccordionSection("103", "Segment to segment flash (radial flash)", default_open=False)
-        sec103.content_layout.addWidget(self._create_section_table(conditions_103))
-        scroll_layout.addWidget(sec103)
+        except Exception as e:
+            error_label = QLabel(f"Failed to load Action Code Catalog from MongoDB: {e}")  # type: ignore
+            error_label.setAlignment(Qt.AlignCenter)  # type: ignore
+            error_label.setStyleSheet("font: 600 13px 'Segoe UI'; color: #dc3545;")
+            scroll_layout.addWidget(error_label)
 
         scroll_layout.addStretch()
         scroll_area.setWidget(scroll_content)

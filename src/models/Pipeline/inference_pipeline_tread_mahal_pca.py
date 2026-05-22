@@ -43,13 +43,6 @@ from src.models.defect_dimension import area_defect_tread, cor_tread
 
 from src.models.Pipeline.polarizer import polarizer_optimized
 
-from src.models.Pipeline.R_inner_mapping_alignment import (
-    build_r_detector,
-    align_and_crop_to_reference_fixed_band,
-    get_reference_r_band,
-    crop_from_reference_band_info,
-)
-
 from src.models.Pipeline.patchs import patchify_index_grouped
 from src.models.Pipeline.vit_autoencoder import ViTEncoderDecoder
 from src.models.Pipeline.yolo_patch_classifier import load_yolo_seg, segment_patch_paths
@@ -64,14 +57,19 @@ try:
 except Exception:
     from src.models.Pipeline.checkpoint import load_checkpoint
 
+from src.models.Pipeline.R_inner_mapping_alignment import (
+    crop_resize_xalign_non_r_side,
+)
+
 # =========================================================
 # CONFIG
 # =========================================================
-MODE = "calibrate"   # "calibrate" or "infer"
+MODE = "infer"   # "calibrate" or "infer"
 DEBUG_SAVE_INTERMEDIATE = False
 
 # calibration good raw images
 CALIB_GOOD_DIR = r"C:\Users\DELL\Downloads\sidewall_qutrac\sidewall_def\calib"
+CALIBRATION_DIR_NAME = "calibration_tread"
 
 # new incoming tires
 PROD_RAW_DIR = r"C:\Users\DELL\Downloads\sidewall_qutrac\sidewall_def\prod"
@@ -115,7 +113,6 @@ NORMALIZE_EACH_BLOCK = False
 
 USE_ALIGNMENT = True
 RESIZE_CROP_TO = (2000, 10000)  # (W, H)
-FINAL_STITCHED_SIZE = (2000, 10000) 
 SLICE_H = 4200
 SLICE_W = 4096
 CONF_THRES_R = 0.3
@@ -125,7 +122,7 @@ BIG_PATCH_W = 200
 BIG_STEP_H = 200
 BIG_STEP_W = 200
 COVER_EDGES = True
-CALIBRATION_DIR_NAME = "calibration_tread"
+
 # with 5 images total:
 # first 5 -> embedding map
 # next 5 -> threshold calibration
@@ -136,6 +133,18 @@ THRESH_IMAGE_COUNT = 5
 LOCAL_PERCENTILE = 99.0
 Z_SCORE_THRESHOLD = 3.0
 SIGMA_FLOOR = 0.01
+
+# =========================================================
+# INFERENCE DEFECT DECISION FILTERS
+# =========================================================
+USE_Z_SCORE_FILTER = True
+USE_SCORE_RATIO_FILTER = True
+
+# distance must be this much higher than threshold
+# 1.00 means just above threshold
+# 1.05 means 5% above threshold
+# 1.10 means 10% above threshold
+SCORE_RATIO_THRESHOLD = 1.30
 DEFECT_DIMENSION_DECIMALS = 2
 
 # =========================================================
@@ -170,7 +179,7 @@ RC_RE = re.compile(r"__r(\d+)_c(\d+)\.(png|jpg|jpeg|bmp|tif|tiff)$", re.IGNORECA
 # =========================================================
 # DEFECTIVE CALIB IMAGE SUPPORT
 # =========================================================
-USE_DEFECT_CALIB_IMAGES = True
+USE_DEFECT_CALIB_IMAGES = False
 DEFECT_CALIB_PREFIXES = ("def",)   # def1, def2, def3 ...
 
 # Patches to ignore ONLY for def* calibration images
@@ -188,6 +197,10 @@ REMOVE_TOP_OUTLIER_PER_RC = True
 OUTLIER_RATIO = 1.8   # remove largest if largest > 1.8 * second_largest
 
 LOCAL_PERCENTILE_AFTER_CLEAN = 95.0
+
+SIDE_NAME = "tread"
+SIDE_LABEL_PREFIX = "TREAD"
+ENABLE_YOLO_DIMENSIONS = False
 
 # =========================================================
 # UTILITIES
@@ -359,25 +372,6 @@ def to_gray(img):
     raise ValueError(f"Unsupported image shape for to_gray: {img.shape}")
 
 
-def choose_threshold_and_stats(
-    key,
-    thresholds_by_rc,
-    mu_by_rc,
-    sigma_by_rc,
-):
-    if key not in thresholds_by_rc:
-        return None
-
-    local_thr = float(thresholds_by_rc[key])
-
-    return {
-        "threshold_source": "local",
-        "threshold_used": local_thr,
-        "mu_used": float(mu_by_rc.get(key, local_thr)),
-        "sigma_used": max(float(sigma_by_rc.get(key, SIGMA_FLOOR)), SIGMA_FLOOR),
-        "local_threshold_used": local_thr,
-    }
-
 def remove_ignored_rc_patches_from_dir(patches_dir, ignore_rcs):
     """
     Physically delete masked RC patch files from a patch directory.
@@ -472,6 +466,7 @@ def extract_vit_features(model, batch, target_block_indices, fusion="concat", no
 def get_patch_embeddings(model, paths, device, tfm=None):
     if tfm is None:
         tfm = _build_transform()
+
     imgs = []
     valid_paths = []
 
@@ -490,15 +485,15 @@ def get_patch_embeddings(model, paths, device, tfm=None):
 
     # TRT path
     if hasattr(model, "extract"):
-        batch = torch.stack(imgs).cpu()
-        embeddings = model.extract(batch)
+        batch = torch.stack(imgs).cpu()   # TRT extractor expects CPU tensor input
+        embeddings = model.extract(batch) # returns torch tensor
         return embeddings, valid_paths
 
-    # PyTorch path
+    # Original PyTorch path
     batch = torch.stack(imgs).to(device, non_blocking=True)
 
     if device == "cuda":
-        batch = batch.half() 
+        batch = batch.half()
 
     if USE_INTERMEDIATE_BLOCKS:
         emb = extract_vit_features(
@@ -701,41 +696,6 @@ def nearest_distance_to_bank(query_emb, bank_embs, metric="cosine", mahalanobis_
     else:
         raise ValueError(f"Unsupported metric: {metric}")
 
-
-def all_distances_to_bank(query_emb, bank_embs, metric="cosine", mahalanobis_stats=None):
-    if metric in ["mahalanobis", "mahalanobis_pca"]:
-        if mahalanobis_stats is None:
-            return [], [], None, None, None
-        dist_val = mahalanobis_distance(query_emb, mahalanobis_stats)
-        return None, [dist_val], None, dist_val, 0
-
-    if bank_embs is None or len(bank_embs) == 0:
-        return [], [], None, None, None
-
-    if metric == "cosine":
-        q = F.normalize(query_emb.unsqueeze(0), dim=1)[0]
-        b = F.normalize(bank_embs, dim=1)
-        sims = torch.matmul(b, q)
-        dists = 1.0 - sims
-
-        sims_list = sims.detach().cpu().numpy().astype(float).tolist()
-        dists_list = dists.detach().cpu().numpy().astype(float).tolist()
-
-        best_idx = int(torch.argmax(sims).item())
-        best_sim = float(sims[best_idx].item())
-        best_dist = float(dists[best_idx].item())
-        return sims_list, dists_list, best_sim, best_dist, best_idx
-
-    elif metric == "euclidean":
-        dists = torch.norm(bank_embs - query_emb.unsqueeze(0), dim=1)
-        dists_list = dists.detach().cpu().numpy().astype(float).tolist()
-
-        best_idx = int(torch.argmin(dists).item())
-        best_dist = float(dists[best_idx].item())
-        return None, dists_list, None, best_dist, best_idx
-
-    else:
-        raise ValueError(f"Unsupported metric: {metric}")
 
 # =========================================================
 # EMBEDDING BANKS / MAHALANOBIS STATS
@@ -1018,30 +978,6 @@ def collect_good_distances_by_rc_leave_one_out(
 
     return dist_by_rc, dist_by_col, dist_by_row, all_distances, rc_rows
 
-
-def _robust_stats(vals, sigma_floor=0.01, mad_floor=0.01):
-    vals = np.asarray(vals, dtype=np.float32)
-    mu = float(np.mean(vals))
-    sigma = max(float(np.std(vals)), sigma_floor)
-
-    med = float(np.median(vals))
-    mad = float(np.median(np.abs(vals - med)))
-    mad = max(mad, mad_floor)
-    mad_sigma = 1.4826 * mad
-
-    return mu, sigma, med, mad, mad_sigma
-
-def _robust_threshold(vals, percentile=99.0, k_sigma=4.0, k_mad=4.0, sigma_floor=0.01, mad_floor=0.01):
-    vals = np.asarray(vals, dtype=np.float32)
-    pct = float(np.percentile(vals, percentile))
-    mu, sigma, med, mad, mad_sigma = _robust_stats(vals, sigma_floor=sigma_floor, mad_floor=mad_floor)
-
-    thr_sigma = mu + k_sigma * sigma
-    thr_mad = med + k_mad * mad_sigma
-
-    thr = max(pct, thr_sigma, thr_mad)
-    return thr, mu, sigma, med, mad
-
 def remove_one_top_outlier(vals, ratio=1.8):
     """
     Remove only one top outlier if it is clearly separated from the second-largest value.
@@ -1141,87 +1077,6 @@ def collect_good_distances_by_rc(
 
     return dist_by_rc, dist_by_col, dist_by_row, all_distances, rc_rows
 
-def collect_all_pairwise_patch_distances(model, patch_dirs, device):
-    image_patch_embs = defaultdict(dict)
-    image_names = []
-
-    for pdir in patch_dirs:
-        image_name = Path(pdir).parent.name
-        image_names.append(image_name)
-
-        all_paths = _list_images(pdir)
-
-        for batch_paths in _batched(all_paths):
-            emb, paths = get_patch_embeddings(model, batch_paths, device, tfm=None)
-
-            for i, p in enumerate(paths):
-                r, c = parse_rc_from_patch_name(p)
-                if r is None or c is None:
-                    continue
-
-                    # keep only informative patches
-                if not is_nonblack_patch(p, black_thresh=10, min_nonblack_ratio=0.25):
-                    continue
-
-                image_patch_embs[image_name][(r, c)] = {
-                    "embedding": emb[i].clone(),
-                    "patch_path": p,
-                }
-
-    image_names = sorted(list(set(image_names)))
-
-    all_keys = set()
-    for img_name in image_names:
-        all_keys.update(image_patch_embs[img_name].keys())
-
-    pairwise_rows = []
-
-    for (r, c) in sorted(all_keys):
-        available_imgs = [img for img in image_names if (r, c) in image_patch_embs[img]]
-
-        for anchor_img in available_imgs:
-            q_emb = image_patch_embs[anchor_img][(r, c)]["embedding"]
-
-            for compare_img in available_imgs:
-                if anchor_img == compare_img:
-                    continue
-
-                ref_emb = image_patch_embs[compare_img][(r, c)]["embedding"]
-
-                if DISTANCE_METRIC == "cosine":
-                    qn = F.normalize(q_emb.unsqueeze(0), dim=1)[0]
-                    rn = F.normalize(ref_emb.unsqueeze(0), dim=1)[0]
-                    sim_val = float(torch.sum(qn * rn).item())
-                    dist_val = float(max(0.0, 1.0 - sim_val))
-
-                    pairwise_rows.append({
-                        "r": int(r),
-                        "c": int(c),
-                        "anchor_image": anchor_img,
-                        "compare_image": compare_img,
-                        "metric": "cosine",
-                        "sim": sim_val,
-                        "dist": dist_val,
-                    })
-
-                elif DISTANCE_METRIC == "euclidean":
-                    dist_val = float(torch.norm(q_emb - ref_emb, p=2).item())
-
-                    pairwise_rows.append({
-                        "r": int(r),
-                        "c": int(c),
-                        "anchor_image": anchor_img,
-                        "compare_image": compare_img,
-                        "metric": "euclidean",
-                        "sim": None,
-                        "dist": dist_val,
-                    })
-
-                else:
-                    raise ValueError(f"Unsupported metric for pairwise export: {DISTANCE_METRIC}")
-
-    return pairwise_rows
-
 # =========================================================
 # THRESHOLD BUILDING
 # =========================================================
@@ -1290,566 +1145,6 @@ def build_patchwise_thresholds_simple(
     )
 
 # =========================================================
-# INFERENCE ON PATCHES
-# =========================================================
-
-@torch.inference_mode()
-def infer_patches_generic(
-    model,
-    patches_dir,
-    reference_bank,
-    reference_bank_meta,
-    thresholds_by_rc,
-    mu_by_rc,
-    sigma_by_rc,
-    mahalanobis_stats,
-    pca_artifact,
-    save_dir,
-    device,
-    patch_transform=None,
-):
-    os.makedirs(save_dir, exist_ok=True)
-
-    all_paths = _list_images(patches_dir)
-    rows = []
-    patch_records = []
-    raw_compare_rows = []
-
-    total = 0
-    paired = 0
-    skipped_no_rc = 0
-    skipped_no_ref = 0
-    skipped_black_bg = 0
-    skipped_no_threshold = 0
-
-    nonblack_paths = [p for p in all_paths if is_nonblack_patch(p)]
-
-    for batch_paths in _batched(all_paths):
-        emb, paths = get_patch_embeddings(model, batch_paths, device, tfm=patch_transform)
-
-        for i, p in enumerate(paths):
-            total += 1
-            fname = os.path.basename(p)
-            r, c = parse_rc_from_patch_name(fname)
-
-            if r is None or c is None:
-                skipped_no_rc += 1
-                rows.append({
-                    "filename": fname,
-                    "full_path": p,
-                    "r": None,
-                    "c": None,
-                    "metric": DISTANCE_METRIC,
-                    "similarity": None,
-                    "distance": None,
-                    "all_similarities": None,
-                    "all_distances": None,
-                    "num_ref_patches": 0,
-                    "best_match_index": None,
-                    "best_match_patch_path": None,
-                    "best_match_group": None,
-                    "best_match_is_augmented": None,
-                    "mahalanobis_mode": None,
-                    "mahalanobis_num_samples": None,
-                    "ang_dist_rad": None,
-                    "local_threshold_used": None,
-                    "threshold_source": None,
-                    "threshold_used": None,
-                    "mu_used": None,
-                    "sigma_used": None,
-                    "z_score": None,
-                    "classification": "SKIP_NO_RC",
-                })
-                continue
-
-            key = (r, c)
-
-            if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"]:
-                has_ref = mahalanobis_stats is not None and key in mahalanobis_stats
-            else:
-                has_ref = reference_bank is not None and key in reference_bank
-
-            if not has_ref:
-                skipped_no_ref += 1
-                rows.append({
-                    "filename": fname,
-                    "full_path": p,
-                    "r": r,
-                    "c": c,
-                    "metric": DISTANCE_METRIC,
-                    "similarity": None,
-                    "distance": None,
-                    "all_similarities": None,
-                    "all_distances": None,
-                    "num_ref_patches": 0,
-                    "best_match_index": None,
-                    "best_match_patch_path": None,
-                    "best_match_group": None,
-                    "best_match_is_augmented": None,
-                    "mahalanobis_mode": None,
-                    "mahalanobis_num_samples": None,
-                    "ang_dist_rad": None,
-                    "local_threshold_used": None,
-                    "threshold_source": None,
-                    "threshold_used": None,
-                    "mu_used": None,
-                    "sigma_used": None,
-                    "z_score": None,
-                    "classification": "SKIP_NO_REF",
-                })
-                continue
-
-            ref_meta_list = reference_bank_meta.get(key, []) if reference_bank_meta is not None else []
-            mahal_stats = mahalanobis_stats.get(key) if mahalanobis_stats is not None else None
-
-            query_vec = emb[i]
-            if DISTANCE_METRIC == "mahalanobis_pca":
-                query_vec = pca_transform_embedding(query_vec, pca_artifact)
-
-            all_sims, all_dists, best_sim, best_dist, best_idx = all_distances_to_bank(
-                query_emb=query_vec,
-                bank_embs=None if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"] else reference_bank[key],
-                metric=DISTANCE_METRIC,
-                mahalanobis_stats=mahal_stats,
-            )
-
-            if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"]:
-                raw_compare_rows.append({
-                    "filename": fname,
-                    "full_path": p,
-                    "r": int(r),
-                    "c": int(c),
-                    "reference_index": 0,
-                    "reference_patch_path": None,
-                    "reference_group": "mahalanobis_distribution",
-                    "reference_is_augmented": None,
-                    "metric": DISTANCE_METRIC,
-                    "similarity": None,
-                    "distance": float(best_dist) if best_dist is not None else None,
-                    "mahalanobis_mode": mahal_stats.get("mode") if mahal_stats else None,
-                    "mahalanobis_num_samples": int(mahal_stats.get("num_samples", 0)) if mahal_stats else 0,
-                })
-            else:
-                if DISTANCE_METRIC == "cosine":
-                    iter_pairs = zip(all_sims, all_dists)
-                else:
-                    iter_pairs = zip([None] * len(all_dists), all_dists)
-
-                for ref_idx, (sim_val, dist_val) in enumerate(iter_pairs):
-                    meta = ref_meta_list[ref_idx] if ref_idx < len(ref_meta_list) else {}
-
-                    raw_compare_rows.append({
-                        "filename": fname,
-                        "full_path": p,
-                        "r": int(r),
-                        "c": int(c),
-                        "reference_index": int(ref_idx),
-                        "reference_patch_path": meta.get("source_patch_path"),
-                        "reference_group": meta.get("source_group"),
-                        "reference_is_augmented": meta.get("is_augmented"),
-                        "metric": DISTANCE_METRIC,
-                        "similarity": float(sim_val) if sim_val is not None else None,
-                        "distance": float(dist_val),
-                    })
-
-            if best_dist is None:
-                skipped_no_ref += 1
-                rows.append({
-                    "filename": fname,
-                    "full_path": p,
-                    "r": r,
-                    "c": c,
-                    "metric": DISTANCE_METRIC,
-                    "similarity": None,
-                    "distance": None,
-                    "all_similarities": None,
-                    "all_distances": None,
-                    "num_ref_patches": 0,
-                    "best_match_index": None,
-                    "best_match_patch_path": None,
-                    "best_match_group": None,
-                    "best_match_is_augmented": None,
-                    "mahalanobis_mode": None,
-                    "mahalanobis_num_samples": None,
-                    "ang_dist_rad": None,
-                    "local_threshold_used": None,
-                    "column_threshold_used": None,
-                    "row_threshold_used": None,
-                    "threshold_source": None,
-                    "threshold_used": None,
-                    "mu_used": None,
-                    "sigma_used": None,
-                    "z_score": None,
-                    "classification": "SKIP_NO_REF",
-                })
-                continue
-
-            if DISTANCE_METRIC == "cosine" and best_sim is not None:
-                sim_clip = float(np.clip(best_sim, -1.0, 1.0))
-                ang_dist = float(np.arccos(sim_clip))
-            else:
-                ang_dist = None
-
-            threshold_info = choose_threshold_and_stats(
-                key=key,
-                thresholds_by_rc=thresholds_by_rc,
-                mu_by_rc=mu_by_rc,
-                sigma_by_rc=sigma_by_rc,
-            )
-
-            if threshold_info is None:
-                skipped_no_threshold += 1
-                rows.append({
-                    "filename": fname,
-                    "full_path": p,
-                    "r": r,
-                    "c": c,
-                    "metric": DISTANCE_METRIC,
-                    "similarity": float(best_sim) if best_sim is not None else None,
-                    "distance": float(best_dist),
-                    "all_similarities": ",".join(f"{x:.8f}" for x in all_sims) if all_sims is not None else None,
-                    "all_distances": ",".join(f"{x:.8f}" for x in all_dists) if all_dists is not None else None,
-                    "num_ref_patches": int(len(all_dists)) if all_dists is not None else 0,
-                    "best_match_index": int(best_idx) if best_idx is not None else None,
-                    "best_match_patch_path": None,
-                    "best_match_group": None,
-                    "best_match_is_augmented": None,
-                    "mahalanobis_mode": mahal_stats.get("mode") if mahal_stats is not None else None,
-                    "mahalanobis_num_samples": int(mahal_stats.get("num_samples", 0)) if mahal_stats is not None else None,
-                    "ang_dist_rad": float(ang_dist) if ang_dist is not None else None,
-                    "local_threshold_used": None,
-                    "threshold_source": None,
-                    "threshold_used": None,
-                    "mu_used": None,
-                    "sigma_used": None,
-                    "z_score": None,
-                    "classification": "SKIP_NO_THRESHOLD",
-                })
-                continue
-
-            thr = float(threshold_info["threshold_used"])
-            mu = float(threshold_info["mu_used"])
-            sigma_eff = max(float(threshold_info["sigma_used"]), SIGMA_FLOOR)
-
-            
-            is_defect = float(best_dist) > float(thr)
-            z_score = (float(best_dist) - mu) / sigma_eff
-
-            paired += 1
-
-            if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"]:
-                num_ref_patches = int(mahal_stats.get("num_samples", 0)) if mahal_stats is not None else 0
-                best_match_index = None
-                best_match_patch_path = None
-                best_match_group = None
-                best_match_is_augmented = None
-            else:
-                best_ref_meta = ref_meta_list[best_idx] if (best_idx is not None and best_idx < len(ref_meta_list)) else {}
-                num_ref_patches = int(len(all_dists))
-                best_match_index = int(best_idx) if best_idx is not None else None
-                best_match_patch_path = best_ref_meta.get("source_patch_path")
-                best_match_group = best_ref_meta.get("source_group")
-                best_match_is_augmented = best_ref_meta.get("is_augmented")
-
-            row = {
-                "filename": fname,
-                "full_path": p,
-                "r": r,
-                "c": c,
-                "metric": DISTANCE_METRIC,
-                "similarity": float(best_sim) if best_sim is not None else None,
-                "distance": float(best_dist),
-                "all_similarities": ",".join(f"{x:.8f}" for x in all_sims) if all_sims is not None else None,
-                "all_distances": ",".join(f"{x:.8f}" for x in all_dists) if all_dists is not None else None,
-                "num_ref_patches": num_ref_patches,
-                "best_match_index": best_match_index,
-                "best_match_patch_path": best_match_patch_path,
-                "best_match_group": best_match_group,
-                "best_match_is_augmented": best_match_is_augmented,
-                "mahalanobis_mode": mahal_stats.get("mode") if mahal_stats is not None else None,
-                "mahalanobis_num_samples": int(mahal_stats.get("num_samples", 0)) if mahal_stats is not None else None,
-                "ang_dist_rad": float(ang_dist) if ang_dist is not None else None,
-                "local_threshold_used": threshold_info["local_threshold_used"],
-                "threshold_source": threshold_info["threshold_source"],
-                "threshold_used": float(thr),
-                "mu_used": float(mu),
-                "sigma_used": float(sigma_eff),
-                "z_score": float(z_score),
-                "classification": "DEFECT" if is_defect else "GOOD",
-            }
-            rows.append(row)
-            patch_records.append(row)
-
-    print(
-        f"[{DISTANCE_METRIC.upper()}] total={total} | paired={paired} | "
-        f"skip_no_rc={skipped_no_rc} | skip_no_ref={skipped_no_ref} | "
-        f"skip_black_bg={skipped_black_bg} | skip_no_threshold={skipped_no_threshold}"
-    )
-
-    df = pd.DataFrame(rows)
-    out_csv = os.path.join(save_dir, "patch_distance_results.csv")
-    df.to_csv(out_csv, index=False)
-    print(f"[SAVE] {out_csv}")
-
-    raw_compare_csv = os.path.join(save_dir, "patch_all_reference_distances.csv")
-    pd.DataFrame(raw_compare_rows).to_csv(raw_compare_csv, index=False)
-    print(f"[SAVE] {raw_compare_csv}")
-
-    stitched_template_path = None
-    if patch_records:
-        sample = cv2.imread(patch_records[0]["full_path"])
-        if sample is not None:
-            ph, pw = sample.shape[:2]
-            max_r = max(int(x["r"]) for x in patch_records if x["r"] is not None)
-            max_c = max(int(x["c"]) for x in patch_records if x["c"] is not None)
-
-            canvas = np.zeros(((max_r + 1) * ph, (max_c + 1) * pw, 3), dtype=np.uint8)
-
-            for rec in patch_records:
-                patch = cv2.imread(rec["full_path"])
-                if patch is None:
-                    continue
-
-                    # stitch in RC layout
-                y0 = int(rec["r"]) * ph
-                x0 = int(rec["c"]) * pw
-                canvas[y0:y0 + ph, x0:x0 + pw] = patch
-
-                if rec["classification"] == "DEFECT":
-                    color = (0, 0, 255)
-                    cv2.rectangle(canvas, (x0, y0), (x0 + pw, y0 + ph), color, 2)
-                    cv2.putText(
-                        canvas,
-                        f"{rec['distance']:.2f}",
-                        (x0 + 5, y0 + 20),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.45,
-                        color,
-                        1,
-                        cv2.LINE_AA,
-                    )
-
-            stitched_template_path = os.path.join(save_dir, "template_stitched.png")
-            cv2.imwrite(stitched_template_path, canvas)
-            print(f"[SAVE] {stitched_template_path}")
-
-    return df, stitched_template_path
-
-# =========================================================
-# HEATMAP / BBOX HELPERS
-# =========================================================
-def compute_topk_image_score_from_df(vit_df, k=5):
-    valid = vit_df[vit_df["classification"].isin(["GOOD", "DEFECT"])].copy()
-    if valid.empty:
-        return None
-
-    dists = valid["distance"].dropna().astype(float).values
-    if len(dists) == 0:
-        return None
-
-    dists_sorted = np.sort(dists)[::-1]
-    topk = dists_sorted[:min(k, len(dists_sorted))]
-    return float(np.mean(topk))
-
-# ==========================================================
-# TREAD DIMENSIONS
-# ==========================================================
-
-def normalize_tyre_name_for_dimensions(tyre_name):
-    if tyre_name is None:
-        return None
-
-    norm = re.sub(r"[^0-9R]", "", str(tyre_name).upper())
-    return norm or None
-
-def tyre_bboxes(img_path):
-    """
-    Find outer tyre bounding box from thresholded image.
-    Returns x, y, w, h, area
-    """
-    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        raise ValueError(f"Could not read image: {img_path}")
-
-    img_blur = cv2.medianBlur(img, 5)
-    _, th1 = cv2.threshold(img_blur, 15, 255, cv2.THRESH_BINARY)
-
-    contours, _ = cv2.findContours(th1, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-    if not contours:
-        raise ValueError(f"No contours found in image: {img_path}")
-
-    cnt = sorted(contours, key=cv2.contourArea, reverse=True)
-    x, y, w, h = cv2.boundingRect(cnt[0])
-    area = w * h
-
-    print(f"[TYRE BOX] {os.path.basename(img_path)} -> x:{x}, y:{y}, w:{w}, h:{h}, area:{area}")
-    return x, y, w, h, area
-
-def save_tyre_bbox_debug_image(img_path, save_path, bbox):
-    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        print(f"[TYRE BOX][WARN] could not read for debug save: {img_path}")
-        return
-
-    vis = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-    x, y, w, h, area = bbox
-    cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 0, 255), 2)
-    cv2.putText(
-        vis,
-        f"x={x}, y={y}, w={w}, h={h}, area={area}",
-        (10, max(25, y - 10)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (0, 0, 255),
-        2,
-        cv2.LINE_AA,
-    )
-
-    cv2.imwrite(save_path, vis)
-    print(f"[TYRE BOX][SAVE] {save_path}")
-
-def enrich_tread_yolo_df_with_dimensions(seg_df, crop_path, tyre_name, debug_save_dir=None):
-    dim_summary = {
-        "tyre_name": tyre_name,
-        "tyre_name_normalized": None,
-        "dimensioned_detections": 0,
-        "max_defect_height_mm": None,
-        "max_defect_width_mm": None,
-        "max_defect_area_mm2": None,
-        "sum_defect_area_mm2": None,
-    }
-
-    if seg_df is None or len(seg_df) == 0:
-        return seg_df, dim_summary
-
-    if crop_path is None or not os.path.isfile(crop_path):
-        print("[DIM][WARN] crop_path missing, skipping tread dimension calculation")
-        return seg_df, dim_summary
-
-    tyre_name_normalized = normalize_tyre_name_for_dimensions(tyre_name)
-    dim_summary["tyre_name_normalized"] = tyre_name_normalized
-
-    if not tyre_name_normalized:
-        print("[DIM][WARN] tyre_name missing, skipping tread dimension calculation")
-        return seg_df, dim_summary
-
-    try:
-        tread_width_mm, tread_height_mm, tread_area_mm2 = tread_dimensions(tyre_name_normalized)
-        dimension_basis = "tread_dimensions"
-    except Exception as e:
-        print(f"[DIM][WARN] failed parsing tyre_name={tyre_name}: {e}")
-        return seg_df, dim_summary
-
-    crop_gray = cv2.imread(crop_path, cv2.IMREAD_GRAYSCALE)
-    if crop_gray is None:
-        print(f"[DIM][WARN] failed to read crop_path={crop_path}")
-        return seg_df, dim_summary
-
-    crop_h, crop_w = int(crop_gray.shape[0]), int(crop_gray.shape[1])
-
-    try:
-        x, y, w, h, area = tyre_bboxes(crop_path)
-        tyre_box = {"x": x, "y": y, "w": w, "h": h, "area": area}
-        base_w = max(int(w), 1)
-        base_h = max(int(h), 1)
-        total_pix = max(int(area), 1)
-        dimension_basis = "tyre_bbox"
-    except Exception as e:
-        print(f"[DIM][WARN] tyre bbox not found, using full crop fallback | {e}")
-        base_w = max(crop_w, 1)
-        base_h = max(crop_h, 1)
-        total_pix = max(int(crop_h * crop_w), 1)
-        dimension_basis = "full_crop_fallback"
-        tyre_box = {"x": 0, "y": 0, "w": crop_w, "h": crop_h, "area": total_pix}
-
-    if debug_save_dir is not None:
-        os.makedirs(debug_save_dir, exist_ok=True)
-        debug_path = os.path.join(debug_save_dir, "tyre_bbox_debug.png")
-        save_tyre_bbox_debug_image(
-            crop_path,
-            debug_path,
-            (tyre_box["x"], tyre_box["y"], tyre_box["w"], tyre_box["h"], tyre_box["area"]),
-        )
-
-    out_df = seg_df.copy()
-    out_df["tyre_name"] = str(tyre_name)
-    out_df["tyre_name_normalized"] = str(tyre_name_normalized)
-
-    out_df["crop_width_px"] = crop_w
-    out_df["crop_height_px"] = crop_h
-    out_df["crop_area_px"] = int(crop_h * crop_w)
-
-    out_df["dimension_basis"] = dimension_basis
-    out_df["tyre_bbox_x_px"] = int(tyre_box["x"])
-    out_df["tyre_bbox_y_px"] = int(tyre_box["y"])
-    out_df["tyre_bbox_width_px"] = int(tyre_box["w"])
-    out_df["tyre_bbox_height_px"] = int(tyre_box["h"])
-    out_df["tyre_bbox_area_px"] = int(tyre_box["area"])
-
-    out_df["tread_width_mm"] = float(tread_width_mm)
-    out_df["tread_height_mm"] = float(tread_height_mm)
-    out_df["tread_area_mm2"] = float(tread_area_mm2)
-
-    out_df["bbox_width_px"] = (out_df["bbox_x2_px"] - out_df["bbox_x1_px"]).clip(lower=0).astype(float)
-    out_df["bbox_height_px"] = (out_df["bbox_y2_px"] - out_df["bbox_y1_px"]).clip(lower=0).astype(float)
-    out_df["bbox_area_px"] = (out_df["bbox_width_px"] * out_df["bbox_height_px"]).astype(float)
-
-    out_df["global_bbox_x1_px"] = (out_df["c"].astype(float) * BIG_PATCH_W) + out_df["bbox_x1_px"].astype(float)
-    out_df["global_bbox_y1_px"] = (out_df["r"].astype(float) * BIG_PATCH_H) + out_df["bbox_y1_px"].astype(float)
-    out_df["global_bbox_x2_px"] = (out_df["c"].astype(float) * BIG_PATCH_W) + out_df["bbox_x2_px"].astype(float)
-    out_df["global_bbox_y2_px"] = (out_df["r"].astype(float) * BIG_PATCH_H) + out_df["bbox_y2_px"].astype(float)
-
-    defect_height_mm = []
-    defect_width_mm = []
-    defect_diag_mm = []
-    defect_area_mm2 = []
-
-    for _, row in out_df.iterrows():
-        rdlen_mm, rdwid_mm = cor_tread(
-            iwid=base_w,
-            ilen=base_h,
-            dwid=float(row["bbox_width_px"]),
-            dlen=float(row["bbox_height_px"]),
-            treadHeight=tread_height_mm,
-            treadWidth=tread_width_mm,
-        )
-
-        area_mm2 = area_defect_tread(
-            t_pix=total_pix,
-            d_pix=float(row["bbox_area_px"]),
-            areaOfTread=tread_area_mm2,
-        )
-
-        defect_height_mm.append(float(rdlen_mm))
-        defect_width_mm.append(float(rdwid_mm))
-        defect_diag_mm.append(float(np.hypot(rdlen_mm, rdwid_mm)))
-        defect_area_mm2.append(float(area_mm2))
-
-    out_df["defect_height_mm"] = np.round(defect_height_mm, DEFECT_DIMENSION_DECIMALS)
-    out_df["defect_width_mm"] = np.round(defect_width_mm, DEFECT_DIMENSION_DECIMALS)
-    out_df["defect_diagonal_mm"] = np.round(defect_diag_mm, DEFECT_DIMENSION_DECIMALS)
-    out_df["defect_area_mm2"] = np.round(defect_area_mm2, DEFECT_DIMENSION_DECIMALS)
-
-    dim_summary.update({
-        "dimensioned_detections": int(len(out_df)),
-        "max_defect_height_mm": float(out_df["defect_height_mm"].max()) if len(out_df) else None,
-        "max_defect_width_mm": float(out_df["defect_width_mm"].max()) if len(out_df) else None,
-        "max_defect_area_mm2": float(out_df["defect_area_mm2"].max()) if len(out_df) else None,
-        "sum_defect_area_mm2": float(np.round(out_df["defect_area_mm2"].sum(), DEFECT_DIMENSION_DECIMALS)) if len(out_df) else None,
-    })
-
-    print(
-        f"[DIM] tyre={tyre_name} | normalized={tyre_name_normalized} | "
-        f"basis={dimension_basis} | detections={dim_summary['dimensioned_detections']} | "
-        f"max_h_mm={dim_summary['max_defect_height_mm']} | "
-        f"max_w_mm={dim_summary['max_defect_width_mm']} | "
-        f"max_area_mm2={dim_summary['max_defect_area_mm2']}"
-    )
-
-    return out_df, dim_summary
-
-# =========================================================
 # YOLO ONLY ON VIT DEFECT PATCHES
 # =========================================================
 def run_yolo_on_vit_defect_patches(
@@ -1893,6 +1188,7 @@ def run_yolo_on_vit_defect_patches(
             seg_model,
             patch_paths,
             conf_threshold=conf_threshold,
+            label_prefix=SIDE_LABEL_PREFIX,
         )
 
         for _, row in defect_df.iterrows():
@@ -1902,8 +1198,10 @@ def run_yolo_on_vit_defect_patches(
 
             info = seg_results[path]
 
+            filter_names = info.get("cls_names_raw", info["cls_names"])
+
             if KEEP_SEG_CLASSES is not None:
-                if not any(name in KEEP_SEG_CLASSES for name in info["cls_names"]):
+                if not any(name in KEEP_SEG_CLASSES for name in filter_names):
                     continue
 
             # Combine overlays (first model sets base, others blend)
@@ -1912,10 +1210,14 @@ def run_yolo_on_vit_defect_patches(
             else:
                 cv2.addWeighted(combined_overlay_cache[path], 0.5, info["overlay"], 0.5, 0)
 
-            for box_xyxy, cid, cname, conf in zip(
+            cls_names_raw = info.get("cls_names_raw", info["cls_names"])
+            cls_names_prefixed = info["cls_names"]
+
+            for box_xyxy, cid, cname_raw, cname_prefixed, conf in zip(
                 info.get("boxes_xyxy", []),
                 info["cls_ids"],
-                info["cls_names"],
+                cls_names_raw,
+                cls_names_prefixed,
                 info["confs"],
             ):
                 x1, y1, x2, y2 = box_xyxy
@@ -1925,8 +1227,10 @@ def run_yolo_on_vit_defect_patches(
                     "r": int(row["r"]),
                     "c": int(row["c"]),
                     "distance": float(row["distance"]),
+                    "side": SIDE_NAME,
                     "cls_id": int(cid),
-                    "cls_name": cname,
+                    "cls_name_raw": cname_raw,
+                    "cls_name": cname_prefixed,
                     "cls_conf": float(conf),
                     "bbox_x1_px": float(x1),
                     "bbox_y1_px": float(y1),
@@ -1936,14 +1240,9 @@ def run_yolo_on_vit_defect_patches(
                 })
 
     seg_df = pd.DataFrame(all_seg_rows)
+
     if not seg_df.empty:
-        # Use the appropriate enrichment function (already present in file)
-        seg_df, dim_summary = enrich_tread_yolo_df_with_dimensions(   # * = sidewall/innerwall/etc.
-            seg_df=seg_df,
-            crop_path=crop_path,
-            tyre_name=tyre_name,
-            debug_save_dir=None,
-        )
+        print(f"[DIM] Skipping dimension calculation for {SIDE_NAME}; laser measurement will be used.")
 
     # Stitched image using combined overlays
     stitched_path = None
@@ -1968,28 +1267,10 @@ def run_yolo_on_vit_defect_patches(
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,255,255), 1, cv2.LINE_AA)
 
         stitched_path = os.path.join(save_dir, "final_stitched.png")
-        canvas_to_save = cv2.resize(canvas, FINAL_STITCHED_SIZE, interpolation=cv2.INTER_AREA)
-        cv2.imwrite(stitched_path, canvas_to_save)
+        cv2.imwrite(stitched_path, canvas)
         print(f"[SAVE] {stitched_path}")
 
     return seg_df, stitched_path, dim_summary
-
-def load_given_reference_preprocessed(ref_image_path):
-    """
-    Load user-given fixed reference image and polarize it.
-    """
-    if not os.path.isfile(ref_image_path):
-        raise RuntimeError(f"Reference image not found: {ref_image_path}")
-
-    ref_raw_bgr = cv2.imread(ref_image_path)
-    if ref_raw_bgr is None:
-        raise RuntimeError(f"Cannot read reference image: {ref_image_path}")
-
-    ref_pre_bgr = polarizer_optimized(ref_raw_bgr)
-    if ref_pre_bgr is None:
-        raise RuntimeError(f"Polarizer failed for reference image: {ref_image_path}")
-
-    return ref_pre_bgr
 
 # =========================================================
 # CALIBRATION
@@ -2008,58 +1289,53 @@ def read_and_polarize(raw_path):
 
 def align_crop_from_preprocessed(
     pre_bgr,
-    ref_pre_bgr,
-    r_detector,
-    save_template_path=None,
-    ref_info=None,
-    use_incoming_r_detection=False,
+    sidewall_r_anchor,
+    offset_ratio,
+    x_align_artifacts_dir,
+    create_x_reference_if_missing=True,
+    x_align_debug_path=None,
+    return_meta=False,
 ):
-    if USE_ALIGNMENT:
-        if use_incoming_r_detection:
-            crop_bgr, aligned_bgr, crop_meta = align_and_crop_to_reference_fixed_band(
-                image_bgr=pre_bgr,
-                reference_bgr=ref_pre_bgr,
-                det_model=r_detector,
-                slice_h=SLICE_H,
-                slice_w=SLICE_W,
-                target_size=RESIZE_CROP_TO,
-            )
+    """
+    TREAD flow:
 
-            if crop_bgr is None:
-                raise RuntimeError(crop_meta)
+        polarized tread image
+        -> crop using current sidewall R1/R2 + tread offset_ratio
+        -> resize to RESIZE_CROP_TO
+        -> tread profile X alignment
+        -> return final crop
 
-        else:
-            if ref_info is None:
-                raise RuntimeError(
-                    "ref_info/reference_band_info is required when use_incoming_r_detection=False"
-                )
+    No tread R detection.
+    No alignment_reference_polarized.
+    No reference_r.
+    No reference_band_info.
+    """
 
-            crop_bgr, crop_meta = crop_from_reference_band_info(
-                image_bgr=pre_bgr,
-                ref_info=ref_info,
-                target_size=RESIZE_CROP_TO,
-            )
-
-            aligned_bgr = crop_bgr.copy()
-
-            if crop_bgr is None:
-                raise RuntimeError(crop_meta)
-
-    else:
-        crop_bgr = cv2.resize(
-            pre_bgr,
-            RESIZE_CROP_TO,
-            interpolation=cv2.INTER_LINEAR,
+    if sidewall_r_anchor is None:
+        raise RuntimeError(
+            f"[{SIDE_NAME}] sidewall_r_anchor is required. "
+            f"Tread must use current sidewall R1/R2 from Maincycle."
         )
-        aligned_bgr = crop_bgr.copy()
-        crop_meta = {
-            "status": "ok",
-            "alignment_mode": "disabled",
-        }
 
-    if save_template_path is not None:
-        save_img = aligned_bgr if use_incoming_r_detection else crop_bgr
-        cv2.imwrite(save_template_path, save_img)
+    if offset_ratio is None:
+        raise RuntimeError(f"[{SIDE_NAME}] offset_ratio is required.")
+
+    if x_align_artifacts_dir is None:
+        raise RuntimeError(f"[{SIDE_NAME}] x_align_artifacts_dir is required.")
+
+    crop_bgr, meta = crop_resize_xalign_non_r_side(
+        pre_bgr=pre_bgr,
+        side_name=SIDE_NAME,
+        sidewall_r_anchor=sidewall_r_anchor,
+        offset_ratio=float(offset_ratio),
+        target_size=RESIZE_CROP_TO,
+        artifacts_dir=x_align_artifacts_dir,
+        create_x_reference_if_missing=create_x_reference_if_missing,
+        debug_save_path=x_align_debug_path,
+    )
+
+    if return_meta:
+        return crop_bgr, meta
 
     return crop_bgr
 
@@ -2072,10 +1348,14 @@ def build_calibration_pipeline(
     calib_good_dir=None,
     output_dir=None,
     ref_image_path=None,
+
+    # New calibration inputs from Maincycle
+    sidewall_anchor_records=None,
+    offset_ratio=None,
+    x_align_artifacts_dir=None,
 ):
     calib_good_dir = calib_good_dir or CALIB_GOOD_DIR
     output_dir = output_dir or OUTPUT_DIR
-    ref_image_path = ref_image_path or REF_IMAGE_PATH
 
     calib_root = os.path.join(output_dir, CALIBRATION_DIR_NAME)
     template_dir = os.path.join(calib_root, "template_result")
@@ -2086,98 +1366,27 @@ def build_calibration_pipeline(
     for d in [template_dir, crop_dir, art_dir, summary_dir]:
         os.makedirs(d, exist_ok=True)
 
-    def _gpu_context():
-        return gpu_sem if gpu_sem is not None else nullcontext()
-
-    # =====================================================
-    # 1) Split calibration images
-    # =====================================================
     all_calib_paths = _list_images(calib_good_dir)
 
-    pure_good_paths = [
-        p for p in all_calib_paths
-        if not is_defect_calib_image(p)
-    ]
-
-    defect_calib_paths = (
-        [p for p in all_calib_paths if is_defect_calib_image(p)]
-        if USE_DEFECT_CALIB_IMAGES
-        else []
-    )
+    pure_good_paths = [p for p in all_calib_paths if not is_defect_calib_image(p)]
+    defect_calib_paths = [p for p in all_calib_paths if is_defect_calib_image(p)] if USE_DEFECT_CALIB_IMAGES else []
 
     needed_good = MAP_IMAGE_COUNT + THRESH_IMAGE_COUNT
-
     if len(pure_good_paths) < needed_good:
         raise RuntimeError(
-            f"Need at least {needed_good} PURE GOOD images in calib_good_dir "
-            f"(excluding def* images). Found only {len(pure_good_paths)}. "
-            f"calib_good_dir={calib_good_dir}"
+            f"Need at least {needed_good} PURE GOOD images in CALIB_GOOD_DIR "
+            f"(excluding def* images). Found only {len(pure_good_paths)}."
         )
 
+    # only pure good images are used for mandatory map/threshold split
     pure_good_paths = pure_good_paths[:needed_good]
     map_raw_paths = pure_good_paths[:MAP_IMAGE_COUNT]
-    thr_raw_paths = pure_good_paths[
-        MAP_IMAGE_COUNT:MAP_IMAGE_COUNT + THRESH_IMAGE_COUNT
-    ]
+    thr_raw_paths = pure_good_paths[MAP_IMAGE_COUNT:MAP_IMAGE_COUNT + THRESH_IMAGE_COUNT]
 
-    print(f"[CALIB] calib_good_dir                 : {calib_good_dir}")
-    print(f"[CALIB] output_dir                     : {output_dir}")
-    print(f"[CALIB] ref_image_path                 : {ref_image_path}")
-    print(f"[CALIB] pure good images used for map  : {len(map_raw_paths)}")
-    print(f"[CALIB] pure good images used for thresh: {len(thr_raw_paths)}")
-    print(f"[CALIB] extra defect images included   : {len(defect_calib_paths)}")
+    print(f"[CALIB] pure good images used for map     : {len(map_raw_paths)}")
+    print(f"[CALIB] pure good images used for thresh  : {len(thr_raw_paths)}")
+    print(f"[CALIB] extra defect images included      : {len(defect_calib_paths)}")
 
-    # =====================================================
-    # 2) Load and save fixed reference image
-    # =====================================================
-    ref_pre_bgr = load_given_reference_preprocessed(ref_image_path)
-
-    ref_pre_path = os.path.join(
-        art_dir,
-        "alignment_reference_polarized.png",
-    )
-    cv2.imwrite(ref_pre_path, ref_pre_bgr)
-    print(f"[SAVE] {ref_pre_path}")
-
-    # =====================================================
-    # 3) Detect R band once on reference image
-    #    For tread/innerwall/bead:
-    #    incoming images do NOT need R detection.
-    #    They use this fixed reference band.
-    # =====================================================
-    reference_band_info = get_reference_r_band(
-        reference_bgr=ref_pre_bgr,
-        det_model=r_detector,
-        slice_h=SLICE_H,
-        slice_w=SLICE_W,
-    )
-
-    if reference_band_info["status"] != "ok":
-        raise RuntimeError(
-            f"Failed to detect R on reference image: {reference_band_info}"
-        )
-
-    reference_r = reference_band_info["ref_r"]
-
-    reference_r_path = os.path.join(art_dir, "reference_r.pt")
-    reference_band_info_path = os.path.join(
-        art_dir,
-        "reference_band_info.pt",
-    )
-
-    torch.save(reference_r, reference_r_path)
-    torch.save(reference_band_info, reference_band_info_path)
-
-    print(f"[SAVE] {reference_r_path}")
-    print(f"[SAVE] {reference_band_info_path}")
-    print("[REFERENCE_CROP] using REF_IMAGE_PATH:", ref_image_path)
-    print("[REFERENCE_CROP] y1:", reference_band_info["y1"])
-    print("[REFERENCE_CROP] y2:", reference_band_info["y2"])
-    print("[REFERENCE_CROP] ref_r:", reference_r)
-
-    # =====================================================
-    # 4) Prepare crop/patch folders
-    # =====================================================
     map_patch_dirs = []
     thr_patch_dirs = []
     def_patch_dirs = []
@@ -2208,9 +1417,43 @@ def build_calibration_pipeline(
             "is_defect_calib": True,
         })
 
-    # =====================================================
-    # 5) Preprocess, fixed-band crop, patchify
-    # =====================================================
+    if sidewall_anchor_records is None:
+        raise RuntimeError(
+            f"[{SIDE_NAME} CALIB] sidewall_anchor_records is required. "
+            f"Run sidewall calibration first and pass its R anchors."
+        )
+
+    if offset_ratio is None:
+        raise RuntimeError(f"[{SIDE_NAME} CALIB] offset_ratio is required.")
+
+    if len(sidewall_anchor_records) != len(processing_items):
+        raise RuntimeError(
+            f"[{SIDE_NAME} CALIB] sidewall anchor count mismatch. "
+            f"sidewall_anchor_records={len(sidewall_anchor_records)}, "
+            f"processing_items={len(processing_items)}. "
+            f"Make sure sidewall and {SIDE_NAME} calibration folders contain matching images in sorted order."
+        )
+
+    x_align_artifacts_dir = x_align_artifacts_dir or art_dir
+
+    x_align_artifacts_dir = x_align_artifacts_dir or art_dir
+
+    old_ref_files = [
+        # old edge-based reference
+        os.path.join(x_align_artifacts_dir, f"{SIDE_NAME}_x_ref_edges.json"),
+        os.path.join(x_align_artifacts_dir, f"{SIDE_NAME}_x_reference_bbox.png"),
+
+        # new tread profile reference
+        os.path.join(x_align_artifacts_dir, f"{SIDE_NAME}_x_reference_signature.npy"),
+        os.path.join(x_align_artifacts_dir, f"{SIDE_NAME}_x_reference_signature_meta.json"),
+        os.path.join(x_align_artifacts_dir, f"{SIDE_NAME}_x_reference_crop.png"),
+    ]
+
+    for p in old_ref_files:
+        if os.path.exists(p):
+            os.remove(p)
+            print(f"[{SIDE_NAME.upper()} XALIGN] Removed old reference: {p}")
+
     for idx, item in enumerate(processing_items):
         raw_path = item["raw_path"]
         role = item["role"]
@@ -2225,28 +1468,41 @@ def build_calibration_pipeline(
         _reset_dir(single_template_dir)
         _reset_dir(single_crop_dir)
 
-        template_path = os.path.join(
-            single_template_dir,
-            f"{name}_tm.png",
-        )
-
-        crop_path = os.path.join(
-            single_crop_dir,
-            f"{name}_crop.png",
-        )
-
-        print(f"[CALIB][{idx + 1}/{len(processing_items)}] {name}")
+        template_path = os.path.join(single_template_dir, f"{name}_tm.png")
+        crop_path = os.path.join(single_crop_dir, f"{name}_crop.png")
 
         _raw_bgr, pre_bgr = read_and_polarize(raw_path)
 
-        crop_bgr = align_crop_from_preprocessed(
-            pre_bgr=pre_bgr,
-            ref_pre_bgr=ref_pre_bgr,
-            r_detector=r_detector,
-            save_template_path=template_path,
-            ref_info=reference_band_info,
-            use_incoming_r_detection=False,
+        anchor_record = sidewall_anchor_records[idx]
+        sidewall_r_anchor = anchor_record["sidewall_r_anchor"]
+
+        x_align_debug_path = os.path.join(
+            single_template_dir,
+            f"{name}_{SIDE_NAME}_xalign_debug.png"
         )
+
+        crop_bgr, crop_meta = align_crop_from_preprocessed(
+            pre_bgr=pre_bgr,
+            sidewall_r_anchor=sidewall_r_anchor,
+            offset_ratio=float(offset_ratio),
+            x_align_artifacts_dir=x_align_artifacts_dir,
+            create_x_reference_if_missing=True,
+            x_align_debug_path=x_align_debug_path,
+            return_meta=True,
+        )
+
+        # Save aligned crop/debug output for review
+        cv2.imwrite(template_path, crop_bgr)
+
+        meta_path = os.path.join(single_template_dir, f"{name}_offset_xalign_meta.json")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "side": SIDE_NAME,
+                "raw_path": raw_path,
+                "role": role,
+                "sidewall_anchor_record": anchor_record,
+                "non_r_crop_meta": crop_meta,
+            }, f, indent=2, default=str)
 
         crop_gray = to_gray(crop_bgr)
         cv2.imwrite(crop_path, crop_gray)
@@ -2260,14 +1516,14 @@ def build_calibration_pipeline(
             cover_edges=COVER_EDGES,
         )
 
+        # IMPORTANT:
+        # for def* calibration images, remove only the known defective RC patches
         if is_defect_calib:
             removed = remove_ignored_rc_patches_from_dir(
                 patches_dir=patches_dir,
                 ignore_rcs=DEFECT_IGNORE_RCS,
             )
-            print(
-                f"[DEF-CALIB] {name} -> removed {removed} masked defect patches"
-            )
+            print(f"[DEF-CALIB] {name} -> removed {removed} masked defect patches")
 
         if role == "map":
             map_patch_dirs.append(patches_dir)
@@ -2285,97 +1541,50 @@ def build_calibration_pipeline(
                 aug_root_dir=aug_root_dir,
             )
 
+            # if augmented defect calib images are ever used, mask them too
             if is_defect_calib:
                 for apd in aug_patch_dirs:
                     removed = remove_ignored_rc_patches_from_dir(
                         patches_dir=apd,
                         ignore_rcs=DEFECT_IGNORE_RCS,
                     )
-                    print(
-                        f"[DEF-CALIB-AUG] {name} -> removed {removed} "
-                        f"masked patches from augmented dir"
-                    )
+                    print(f"[DEF-CALIB-AUG] {name} -> removed {removed} masked patches from augmented dir")
 
             if role == "map" and AUGMENT_MAP:
                 map_patch_dirs.extend(aug_patch_dirs)
-
             elif role == "thr" and AUGMENT_THRESH:
                 thr_patch_dirs.extend(aug_patch_dirs)
-
             elif role == "def_extra":
+                # use augmented defect-calib good patches in both bank + threshold, if wanted
                 if AUGMENT_MAP:
                     def_patch_dirs.extend(aug_patch_dirs)
                 if AUGMENT_THRESH:
                     def_patch_dirs.extend(aug_patch_dirs)
 
     # =====================================================
-    # 6) Source dirs for bank/stat/threshold
+    # Include good patches from defect-calib images
     # =====================================================
     bank_source_dirs = map_patch_dirs + def_patch_dirs
-    threshold_source_dirs = thr_patch_dirs + def_patch_dirs
+    threshold_source_dirs = thr_patch_dirs 
 
-    print(f"[CALIB] map_patch_dirs        : {len(map_patch_dirs)}")
-    print(f"[CALIB] thr_patch_dirs        : {len(thr_patch_dirs)}")
-    print(f"[CALIB] def_patch_dirs        : {len(def_patch_dirs)}")
-    print(f"[CALIB] bank_source_dirs      : {len(bank_source_dirs)}")
-    print(f"[CALIB] threshold_source_dirs : {len(threshold_source_dirs)}")
+    gpu_ctx = gpu_sem if gpu_sem is not None else nullcontext()
 
-    if len(bank_source_dirs) == 0:
-        raise RuntimeError("No bank_source_dirs found for calibration")
+    with gpu_ctx:
 
-    if len(threshold_source_dirs) == 0:
-        raise RuntimeError("No threshold_source_dirs found for calibration")
-
-    # =====================================================
-    # 7) PCA artifact
-    # =====================================================
-    pca_artifact = None
-
-    if DISTANCE_METRIC == "mahalanobis_pca":
-        pca_fit_dirs = map_patch_dirs if PCA_FIT_ON_MAP_ONLY else bank_source_dirs
-
-        if len(pca_fit_dirs) == 0:
-            raise RuntimeError("No patch dirs available for PCA fitting")
-
-        with _gpu_context():
+        if DISTANCE_METRIC == "mahalanobis_pca":
+            pca_source_dirs = bank_source_dirs if PCA_FIT_ON_MAP_ONLY else (bank_source_dirs + threshold_source_dirs)
             pca_artifact = fit_global_pca_from_patch_dirs(
                 model=model,
-                patch_dirs=pca_fit_dirs,
+                patch_dirs=pca_source_dirs,
                 device=device,
                 n_components=PCA_N_COMPONENTS,
             )
+        else:
+            pca_artifact = None
 
-        pca_path = os.path.join(art_dir, "pca_artifact.pt")
-        torch.save(pca_artifact, pca_path)
-        print(f"[SAVE] {pca_path}")
-
-    # =====================================================
-    # 8) Build embedding bank
-    # =====================================================
-    with _gpu_context():
-        reference_bank, reference_bank_meta = build_embedding_bank_from_patch_dirs(
-            model=model,
-            patch_dirs=bank_source_dirs,
-            device=device,
-            return_meta=True,
-        )
-
-    bank_path = os.path.join(art_dir, "embedding_bank.pt")
-    meta_path = os.path.join(art_dir, "embedding_bank_meta.pt")
-
-    torch.save(reference_bank, bank_path)
-    torch.save(reference_bank_meta, meta_path)
-
-    print(f"[SAVE] {bank_path}")
-    print(f"[SAVE] {meta_path}")
-
-    # =====================================================
-    # 9) Build Mahalanobis statistics
-    # =====================================================
-    mahalanobis_stats = None
-
-    if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"]:
-        with _gpu_context():
+        if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"]:
+            reference_bank = {}
+            reference_bank_meta = {}
             mahalanobis_stats = build_mahalanobis_stats_from_patch_dirs(
                 model=model,
                 patch_dirs=bank_source_dirs,
@@ -2383,20 +1592,18 @@ def build_calibration_pipeline(
                 mode=MAHALANOBIS_MODE,
                 reg_eps=MAHALANOBIS_REG_EPS,
                 min_samples=MAHALANOBIS_MIN_SAMPLES,
-                pca_artifact=pca_artifact,
+                pca_artifact=pca_artifact if DISTANCE_METRIC == "mahalanobis_pca" else None,
             )
+        else:
+            reference_bank, reference_bank_meta = build_embedding_bank_from_patch_dirs(
+                model=model,
+                patch_dirs=bank_source_dirs,
+                device=device,
+                return_meta=True,
+            )
+            mahalanobis_stats = None
 
-        mahal_path = os.path.join(art_dir, "mahalanobis_stats.pt")
-        torch.save(mahalanobis_stats, mahal_path)
-        print(f"[SAVE] {mahal_path}")
-
-    # =====================================================
-    # 10) Build threshold distances
-    # =====================================================
-    if USE_LEAVE_ONE_OUT_THRESHOLDS:
-        print("[THRESH] using leave-one-out threshold distances")
-
-        with _gpu_context():
+        if USE_LEAVE_ONE_OUT_THRESHOLDS:
             image_patch_features = build_image_patch_feature_dict(
                 model=model,
                 patch_dirs=threshold_source_dirs,
@@ -2404,49 +1611,24 @@ def build_calibration_pipeline(
                 pca_artifact=pca_artifact if DISTANCE_METRIC == "mahalanobis_pca" else None,
             )
 
-        (
-            dist_by_rc,
-            dist_by_col,
-            dist_by_row,
-            all_distances,
-            rc_rows,
-        ) = collect_good_distances_by_rc_leave_one_out(
-            image_patch_features=image_patch_features,
-            metric=DISTANCE_METRIC,
-            mahalanobis_mode=MAHALANOBIS_MODE,
-            reg_eps=MAHALANOBIS_REG_EPS,
-            min_samples=MAHALANOBIS_MIN_SAMPLES,
-        )
-
-    else:
-        print("[THRESH] using bank-comparison threshold distances")
-
-        with _gpu_context():
-            (
-                dist_by_rc,
-                dist_by_col,
-                dist_by_row,
-                all_distances,
-                rc_rows,
-            ) = collect_good_distances_by_rc(
+            dist_by_rc, dist_by_col, dist_by_row, all_distances, rc_rows = collect_good_distances_by_rc_leave_one_out(
+                image_patch_features=image_patch_features,
+                metric=DISTANCE_METRIC,
+                mahalanobis_mode=MAHALANOBIS_MODE,
+                reg_eps=MAHALANOBIS_REG_EPS,
+                min_samples=MAHALANOBIS_MIN_SAMPLES,
+            )
+        else:
+            dist_by_rc, dist_by_col, dist_by_row, all_distances, rc_rows = collect_good_distances_by_rc(
                 model=model,
                 patch_dirs=threshold_source_dirs,
                 reference_bank=reference_bank,
                 device=device,
                 mahalanobis_stats=mahalanobis_stats,
-                pca_artifact=pca_artifact,
+                pca_artifact=pca_artifact if DISTANCE_METRIC == "mahalanobis_pca" else None,
             )
 
-    if len(all_distances) == 0:
-        raise RuntimeError(
-            "No calibration distances collected for thresholds. "
-            "Check patch generation, reference_band_info, and calibration images."
-        )
-
-    # =====================================================
-    # 11) Build local thresholds
-    # =====================================================
-    (
+        (
         thresholds_by_rc,
         mu_by_rc,
         sigma_by_rc,
@@ -2459,89 +1641,70 @@ def build_calibration_pipeline(
         outlier_ratio=OUTLIER_RATIO,
     )
 
-    if len(thresholds_by_rc) == 0:
-        raise RuntimeError("No thresholds built. Check calibration distances.")
+        torch.save(reference_bank, os.path.join(art_dir, "embedding_bank.pt"))
+        torch.save(reference_bank_meta, os.path.join(art_dir, "embedding_bank_meta.pt"))
 
-    thr_obj = {
-        "thresholds_by_rc": thresholds_by_rc,
-        "mu_by_rc": mu_by_rc,
-        "sigma_by_rc": sigma_by_rc,
-        "cleaned_dist_by_rc": cleaned_dist_by_rc,
-        "config": {
-            "distance_metric": DISTANCE_METRIC,
-            "use_leave_one_out": USE_LEAVE_ONE_OUT_THRESHOLDS,
-            "local_percentile_after_clean": LOCAL_PERCENTILE_AFTER_CLEAN,
-            "remove_top_outlier_per_rc": REMOVE_TOP_OUTLIER_PER_RC,
-            "outlier_ratio": OUTLIER_RATIO,
-            "map_image_count": MAP_IMAGE_COUNT,
-            "thresh_image_count": THRESH_IMAGE_COUNT,
-            "use_defect_calib_images": USE_DEFECT_CALIB_IMAGES,
-            "defect_ignore_rcs": sorted(list(DEFECT_IGNORE_RCS)),
-            "pca_n_components": PCA_N_COMPONENTS,
-            "pca_fit_on_map_only": PCA_FIT_ON_MAP_ONLY,
-            "mahalanobis_mode": MAHALANOBIS_MODE,
-            "mahalanobis_reg_eps": MAHALANOBIS_REG_EPS,
-            "mahalanobis_min_samples": MAHALANOBIS_MIN_SAMPLES,
+        if mahalanobis_stats is not None:
+            torch.save(mahalanobis_stats, os.path.join(art_dir, "mahalanobis_stats.pt"))
+        if pca_artifact is not None:
+            torch.save(pca_artifact, os.path.join(art_dir, "pca_artifact.pt"))
+
+        torch.save(
+        {
+            "thresholds_by_rc": thresholds_by_rc,
+            "mu_by_rc": mu_by_rc,
+            "sigma_by_rc": sigma_by_rc,
         },
-    }
+        os.path.join(art_dir, "thresholds_by_rc.pt"),
+    )
+        pd.DataFrame(local_debug_rows).to_csv(
+        os.path.join(summary_dir, "calibration_local_threshold_debug.csv"),
+        index=False,
+    )
 
-    thresholds_path = os.path.join(art_dir, "thresholds_by_rc.pt")
-    torch.save(thr_obj, thresholds_path)
-    print(f"[SAVE] {thresholds_path}")
+        col_summary_rows = []
+        for c, vals in dist_by_col.items():
+            vals_np = np.array(vals, dtype=np.float32)
+            if len(vals_np) == 0:
+                continue
+            col_summary_rows.append({
+                "c": int(c),
+                "count": int(len(vals_np)),
+                "min_dist": float(np.min(vals_np)),
+                "max_dist": float(np.max(vals_np)),
+                "mean_dist": float(np.mean(vals_np)),
+                "std_dist": float(np.std(vals_np)),
+                "p95": float(np.percentile(vals_np, 95)),
+                "p99": float(np.percentile(vals_np, 99)),
+            })
 
-    # =====================================================
-    # 12) Save debug summaries
-    # =====================================================
-    rc_dist_csv = os.path.join(summary_dir, "calibration_good_distances_by_rc.csv")
-    pd.DataFrame(rc_rows).to_csv(rc_dist_csv, index=False)
-    print(f"[SAVE] {rc_dist_csv}")
-
-    local_debug_csv = os.path.join(summary_dir, "local_threshold_debug.csv")
-    pd.DataFrame(local_debug_rows).to_csv(local_debug_csv, index=False)
-    print(f"[SAVE] {local_debug_csv}")
-
-    summary_json = os.path.join(summary_dir, "calibration_summary.json")
-
-    summary = {
-        "calib_good_dir": calib_good_dir,
-        "output_dir": output_dir,
-        "ref_image_path": ref_image_path,
-        "calib_root": calib_root,
-        "art_dir": art_dir,
-        "template_dir": template_dir,
-        "crop_dir": crop_dir,
-        "summary_dir": summary_dir,
-        "num_map_images": len(map_raw_paths),
-        "num_threshold_images": len(thr_raw_paths),
-        "num_defect_extra_images": len(defect_calib_paths),
-        "num_bank_source_dirs": len(bank_source_dirs),
-        "num_threshold_source_dirs": len(threshold_source_dirs),
-        "num_reference_bank_rc": len(reference_bank),
-        "num_threshold_rc": len(thresholds_by_rc),
-        "num_calibration_distances": len(all_distances),
-        "distance_metric": DISTANCE_METRIC,
-        "reference_r_path": reference_r_path,
-        "reference_band_info_path": reference_band_info_path,
-        "alignment_reference_polarized_path": ref_pre_path,
-        "thresholds_path": thresholds_path,
-    }
-
-    if DISTANCE_METRIC == "mahalanobis_pca":
-        summary["pca_path"] = os.path.join(art_dir, "pca_artifact.pt")
-
-    if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"]:
-        summary["mahalanobis_stats_path"] = os.path.join(
-            art_dir,
-            "mahalanobis_stats.pt",
+        pd.DataFrame(col_summary_rows).to_csv(
+            os.path.join(summary_dir, "calibration_column_summary.csv"),
+            index=False,
         )
 
-    with open(summary_json, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, default=str)
+        row_summary_rows = []
+        for r, vals in dist_by_row.items():
+            vals_np = np.array(vals, dtype=np.float32)
+            if len(vals_np) == 0:
+                continue
+            row_summary_rows.append({
+                "r": int(r),
+                "count": int(len(vals_np)),
+                "min_dist": float(np.min(vals_np)),
+                "max_dist": float(np.max(vals_np)),
+                "mean_dist": float(np.mean(vals_np)),
+                "std_dist": float(np.std(vals_np)),
+                "p95": float(np.percentile(vals_np, 95)),
+                "p99": float(np.percentile(vals_np, 99)),
+            })
 
-    print(f"[SAVE] {summary_json}")
-    print("[CALIB] Calibration completed successfully")
+        pd.DataFrame(row_summary_rows).to_csv(
+            os.path.join(summary_dir, "calibration_row_summary.csv"),
+            index=False,
+        )
 
-    return summary
+        print("[DONE] calibration pipeline finished")
 
 def patchify_array_indexed(img_gray, patch_h, patch_w, step_h, step_w, cover_edges=True):
     H, W = img_gray.shape[:2]
@@ -2576,94 +1739,43 @@ def load_calibration_artifacts_from_dir(
 ):
     if calibration_artifact_dir_override:
         art_dir = calibration_artifact_dir_override
-
     elif ref_image_path_override:
         art_dir = os.path.dirname(ref_image_path_override)
-
     else:
         output_dir = output_dir or OUTPUT_DIR
         calib_root = os.path.join(output_dir, CALIBRATION_DIR_NAME)
         art_dir = os.path.join(calib_root, "artifacts")
 
-    meta_path = os.path.join(art_dir, "embedding_bank_meta.pt")
-    ref_pre_path = os.path.join(art_dir, "alignment_reference_polarized.png")
     bank_path = os.path.join(art_dir, "embedding_bank.pt")
+    meta_path = os.path.join(art_dir, "embedding_bank_meta.pt")
     thr_path = os.path.join(art_dir, "thresholds_by_rc.pt")
     mahal_path = os.path.join(art_dir, "mahalanobis_stats.pt")
     pca_path = os.path.join(art_dir, "pca_artifact.pt")
-    reference_r_path = os.path.join(art_dir, "reference_r.pt")
-    reference_band_info_path = os.path.join(art_dir, "reference_band_info.pt")
-
-    if not os.path.isfile(ref_pre_path):
-        raise RuntimeError(f"Missing alignment reference: {ref_pre_path}")
 
     if not os.path.isfile(thr_path):
-        raise RuntimeError(f"Missing thresholds: {thr_path}")
+        raise RuntimeError(f"[{SIDE_NAME}] Missing thresholds: {thr_path}")
 
-    if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"] and not os.path.isfile(mahal_path):
-        raise RuntimeError(f"Missing mahalanobis stats: {mahal_path}")
+    if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"]:
+        if not os.path.isfile(mahal_path):
+            raise RuntimeError(f"[{SIDE_NAME}] Missing mahalanobis stats: {mahal_path}")
 
-    if DISTANCE_METRIC == "mahalanobis_pca" and not os.path.isfile(pca_path):
-        raise RuntimeError(f"Missing PCA artifact: {pca_path}")
-
-    ref_pre_bgr = cv2.imread(ref_pre_path)
-    if ref_pre_bgr is None:
-        raise RuntimeError(f"Cannot read alignment reference: {ref_pre_path}")
+    if DISTANCE_METRIC == "mahalanobis_pca":
+        if not os.path.isfile(pca_path):
+            raise RuntimeError(f"[{SIDE_NAME}] Missing PCA artifact: {pca_path}")
 
     reference_bank = torch.load(bank_path, map_location="cpu") if os.path.isfile(bank_path) else {}
     reference_bank_meta = torch.load(meta_path, map_location="cpu") if os.path.isfile(meta_path) else {}
     thr_obj = torch.load(thr_path, map_location="cpu")
     mahalanobis_stats = torch.load(mahal_path, map_location="cpu") if os.path.isfile(mahal_path) else None
     pca_artifact = torch.load(pca_path, map_location="cpu") if os.path.isfile(pca_path) else None
-    reference_r = torch.load(reference_r_path, map_location="cpu") if os.path.isfile(reference_r_path) else None
-
-    reference_band_info = (
-        torch.load(reference_band_info_path, map_location="cpu")
-        if os.path.isfile(reference_band_info_path)
-        else None
-    )
-
-    if reference_band_info is None:
-        if reference_r is None or len(reference_r) < 2:
-            raise RuntimeError(
-                "Missing reference_band_info.pt and invalid/missing reference_r.pt"
-            )
-
-        ref_r_sorted = sorted(reference_r, key=lambda v: v[5])[:2]
-        H, W = ref_pre_bgr.shape[:2]
-
-        y1 = int(round(ref_r_sorted[0][1]))
-        y2 = int(round(ref_r_sorted[1][1]))
-
-        y1 = max(0, min(y1, H - 1))
-        y2 = max(0, min(y2, H))
-
-        if y2 <= y1:
-            raise RuntimeError(
-                f"Invalid saved reference_r crop band: y1={y1}, y2={y2}, reference_r={reference_r}"
-            )
-
-        reference_band_info = {
-            "status": "ok",
-            "ref_r": ref_r_sorted,
-            "y1": y1,
-            "y2": y2,
-            "ref_h": H,
-            "ref_w": W,
-        }
-
-        print("[ARTIFACT][WARN] reference_band_info.pt missing; rebuilt from reference_r.pt")
 
     thresholds_by_rc = thr_obj["thresholds_by_rc"]
     mu_by_rc = thr_obj["mu_by_rc"]
     sigma_by_rc = thr_obj["sigma_by_rc"]
 
-    print(f"[ARTIFACTS] loaded from: {art_dir}")
+    print(f"[ARTIFACT] {SIDE_NAME}: loaded artifacts from: {art_dir}")
 
     return (
-        ref_pre_bgr,
-        reference_r,
-        reference_band_info,
         reference_bank,
         reference_bank_meta,
         thresholds_by_rc,
@@ -2698,9 +1810,9 @@ def load_runtime(
     calibration_artifact_dir_override=None,
 ):
     output_dir = output_dir_override or OUTPUT_DIR
-    calibration_artifact_dir = None
     checkpoint_path = checkpoint_path_override or CHECKPOINT_PATH
     yolo_r_path = yolo_r_path_override or YOLO_R_PATH
+    calibration_artifact_dir = calibration_artifact_dir_override
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -2711,32 +1823,39 @@ def load_runtime(
         print("[WARN] CUDA not available, using CPU")
         device = "cpu"
 
-    if r_detector_override is not None:
-        r_detector = r_detector_override
-        print("[RUNTIME] using provided R-detector")
+    # Tread does not need R detection.
+    # It uses sidewall_r_anchor from sidewall1/sidewall2.
+    r_detector = r_detector_override
+
+    if r_detector is not None:
+        print("[RUNTIME] tread received shared R-detector, but tread will not use it")
     else:
-        r_detector = build_r_detector(
-            yolo_r_path,
-            conf=CONF_THRES_R,
-            device=device,
-        )
+        print("[RUNTIME] tread does not require R-detector")
 
     if use_trt_vit and trt_vit is not None:
         model = trt_vit
         print("[RUNTIME] using TensorRT ViT engine")
+
     else:
         if checkpoint_path and str(checkpoint_path).lower().endswith(".engine"):
-            model = None
-            print("[RUNTIME] deferring ViT model load until TRT engine is attached")
-        else:
-            model = make_model().to(device).eval()
-            model = model.half()
-            optimizer = torch.optim.AdamW(
-                model.parameters(),
-                lr=1e-4,
-                weight_decay=1e-4,
+            raise RuntimeError(
+                "[RUNTIME] checkpoint_path is a TensorRT .engine file, "
+                "but trt_vit was not passed. Check cycle_engine.py TRT loading."
             )
-            load_checkpoint(model, optimizer, checkpoint_path)
+
+        model = make_model().to(device).eval()
+
+        if device == "cuda":
+            model = model.half()
+
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=1e-4,
+            weight_decay=1e-4,
+        )
+
+        load_checkpoint(model, optimizer, checkpoint_path)
+        print(f"[RUNTIME] PyTorch ViT checkpoint loaded: {checkpoint_path}")
 
     patch_transform = _build_transform()
 
@@ -2748,10 +1867,13 @@ def load_runtime(
 
     if seg_models is not None:
         runtime_seg_models = seg_models
+
     elif seg_model_override is not None:
         runtime_seg_models = {"default": seg_model_override}
+
     else:
         runtime_seg_models = {}
+
         if use_yolo_seg:
             try:
                 runtime_seg_models["default"] = load_yolo_seg(
@@ -2764,9 +1886,6 @@ def load_runtime(
 
     if load_artifacts:
         (
-            ref_pre_bgr,
-            reference_r,
-            reference_band_info,
             reference_bank,
             reference_bank_meta,
             thresholds_by_rc,
@@ -2780,10 +1899,7 @@ def load_runtime(
             ref_image_path_override=ref_image_path_override,
             calibration_artifact_dir_override=calibration_artifact_dir_override,
         )
-
     else:
-        ref_pre_bgr = None
-        reference_r = None
         reference_bank = {}
         reference_bank_meta = {}
         thresholds_by_rc = {}
@@ -2793,47 +1909,6 @@ def load_runtime(
         pca_artifact = None
         calibration_artifact_dir = calibration_artifact_dir_override
 
-    if reference_band_info is None:
-        if ref_pre_bgr is not None and reference_r is not None and len(reference_r) >= 2:
-            H, W = ref_pre_bgr.shape[:2]
-
-            ref_r_sorted = sorted(reference_r, key=lambda v: v[5])[:2]
-
-            y1 = int(round(ref_r_sorted[0][1]))
-            y2 = int(round(ref_r_sorted[1][1]))
-
-            y1 = max(0, min(y1, H - 1))
-            y2 = max(0, min(y2, H))
-
-            if y2 <= y1:
-                raise RuntimeError(
-                    f"Invalid saved reference_r crop band: y1={y1}, y2={y2}, reference_r={reference_r}"
-                )
-
-            reference_band_info = {
-                "status": "ok",
-                "ref_r": ref_r_sorted,
-                "y1": y1,
-                "y2": y2,
-                "ref_h": H,
-                "ref_w": W,
-            }
-
-            print("[RUNTIME][WARN] reference_band_info.pt missing; rebuilt from reference_r.pt")
-
-        elif ref_pre_bgr is not None:
-            reference_band_info = get_reference_r_band(
-                reference_bgr=ref_pre_bgr,
-                det_model=r_detector,
-                slice_h=SLICE_H,
-                slice_w=SLICE_W,
-            )
-
-            if reference_band_info["status"] != "ok":
-                raise RuntimeError(
-                    f"Failed to precompute reference band: {reference_band_info}"
-                )
-
     return {
         "device": device,
         "model": model,
@@ -2842,17 +1917,6 @@ def load_runtime(
         "seg_models": runtime_seg_models,
         "use_yolo_seg": use_yolo_seg,
 
-        "output_dir": output_dir,
-        "checkpoint_path": checkpoint_path,
-        "yolo_r_path": yolo_r_path,
-        "ref_image_path_override": ref_image_path_override,
-        "tyre_name": tyre_name_override,
-
-        "calibration_artifact_dir": calibration_artifact_dir,
-        "ref_pre_bgr": ref_pre_bgr,
-        "reference_r": reference_r,
-        "reference_band_info": reference_band_info,
-
         "reference_bank": reference_bank,
         "reference_bank_meta": reference_bank_meta,
         "thresholds_by_rc": thresholds_by_rc,
@@ -2860,7 +1924,17 @@ def load_runtime(
         "sigma_by_rc": sigma_by_rc,
         "mahalanobis_stats": mahalanobis_stats,
         "pca_artifact": pca_artifact,
-        "use_trt_vit": (trt_vit is not None and use_trt_vit),
+
+        "output_dir": output_dir,
+        "checkpoint_path": checkpoint_path,
+        "yolo_r_path": yolo_r_path,
+        "ref_image_path_override": ref_image_path_override,
+        "tyre_name": tyre_name_override,
+
+        "calibration_artifact_dir": calibration_artifact_dir,
+        "x_align_artifacts_dir": calibration_artifact_dir,
+
+        "use_trt_vit": bool(trt_vit is not None and use_trt_vit),
     }
 
 def warmup_runtime(runtime):
@@ -2947,21 +2021,6 @@ def warmup_runtime(runtime):
                 except Exception:
                     pass
 
-        # Warm up alignment
-        try:
-            ref_pre_bgr = runtime.get("ref_pre_bgr")
-            if ref_pre_bgr is not None:
-                _ = align_crop_from_preprocessed(
-                    pre_bgr=ref_pre_bgr.copy(),
-                    ref_pre_bgr=ref_pre_bgr,
-                    r_detector=None,
-                    save_template_path=None,
-                    ref_info=runtime.get("reference_band_info"),
-                    use_incoming_r_detection=False,
-                )
-        except Exception:
-            pass
-
         torch.cuda.synchronize()
         print("[WARMUP] done")
 
@@ -2974,315 +2033,32 @@ def calibrate_side(
     output_dir_override=None,
     ref_image_path_override=None,
     gpu_sem=None,
+    sidewall_anchor_records=None,
+    offset_ratio=None,
+    x_align_artifacts_dir=None,
 ):
     calib_dir = calib_good_dir_override or CALIB_GOOD_DIR
     output_dir = output_dir_override or OUTPUT_DIR
-    ref_image_path = ref_image_path_override or REF_IMAGE_PATH
+
+    if x_align_artifacts_dir is None:
+        x_align_artifacts_dir = os.path.join(
+            output_dir,
+            CALIBRATION_DIR_NAME,
+            "artifacts",
+        )
 
     return build_calibration_pipeline(
         runtime["model"],
-        runtime["r_detector"],
+        runtime.get("r_detector"),
         runtime["device"],
         gpu_sem=gpu_sem,
         calib_good_dir=calib_dir,
         output_dir=output_dir,
-        ref_image_path=ref_image_path,
+        ref_image_path=ref_image_path_override,
+        sidewall_anchor_records=sidewall_anchor_records,
+        offset_ratio=offset_ratio,
+        x_align_artifacts_dir=x_align_artifacts_dir,
     )
-
-def infer_patches_generic_from_arrays(
-    model,
-    patch_records,
-    reference_bank,
-    reference_bank_meta,
-    thresholds_by_rc,
-    mu_by_rc,
-    sigma_by_rc,
-    mahalanobis_stats,
-    pca_artifact,
-    save_dir,
-    device,
-    patch_transform=None,
-):
-    os.makedirs(save_dir, exist_ok=True)
-
-    rows = []
-    raw_compare_rows = []
-    visual_records = []
-
-    total = len(patch_records)
-    paired = 0
-    skipped_no_rc = 0
-    skipped_no_ref = 0
-    skipped_black_bg = 0
-    skipped_no_threshold = 0
-
-    if patch_transform is None:
-        patch_transform = _build_transform()
-
-    usable_patch_records = []
-    for rec in patch_records:
-        r = rec.get("r")
-        c = rec.get("c")
-        patch = rec.get("patch")
-
-        if r is None or c is None:
-            skipped_no_rc += 1
-            continue
-
-        if not is_nonblack_patch_array(patch, black_thresh=10, min_nonblack_ratio=0.25):
-            skipped_black_bg += 1
-            continue
-
-        usable_patch_records.append(rec)
-
-    for batch_recs in _batched(usable_patch_records, batch_size=BATCH_SIZE):
-        emb, valid_recs = get_patch_embeddings_from_arrays(
-            model=model,
-            patch_records=batch_recs,
-            device=device,
-            tfm=patch_transform,
-        )
-
-        for i, rec in enumerate(valid_recs):
-            r = rec.get("r")
-            c = rec.get("c")
-            patch = rec.get("patch")
-            filename = rec.get("name", f"patch__r{r:03d}_c{c:03d}.png")
-
-            if r is None or c is None:
-                skipped_no_rc += 1
-                continue
-
-            if not is_nonblack_patch_array(patch, black_thresh=10, min_nonblack_ratio=0.25):
-                skipped_black_bg += 1
-                continue
-
-            key = (int(r), int(c))
-
-            has_ref = (
-                (reference_bank is not None and key in reference_bank) or
-                (mahalanobis_stats is not None and key in mahalanobis_stats)
-            )
-            if not has_ref:
-                skipped_no_ref += 1
-                continue
-
-            query_vec = emb[i].clone().float()
-            if DISTANCE_METRIC == "mahalanobis_pca" and pca_artifact is not None:
-                query_vec = pca_transform_embedding(query_vec, pca_artifact)
-
-            nearest_ref_name = None
-            ang_dist = None
-            mahal_stats = mahalanobis_stats.get(key) if mahalanobis_stats is not None and key in mahalanobis_stats else None
-
-            if DISTANCE_METRIC in ["mahalanobis", "mahalanobis_pca"]:
-                nearest_ref_name = None
-                _, best_dist = nearest_distance_to_bank(
-                    query_emb=query_vec,
-                    bank_embs=None,
-                    metric=DISTANCE_METRIC,
-                    mahalanobis_stats=mahal_stats,
-                )
-            else:
-                bank_embs = reference_bank.get(key, [])
-                if not bank_embs:
-                    skipped_no_ref += 1
-                    continue
-
-                nearest_ref_name = None
-                _, best_dist = nearest_distance_to_bank(
-                    query_emb=query_vec,
-                    bank_embs=bank_embs,
-                    metric=DISTANCE_METRIC,
-                    mahalanobis_stats=None,
-                )
-
-            thr = thresholds_by_rc.get(key)
-            mu = mu_by_rc.get(key)
-            sigma_eff = sigma_by_rc.get(key)
-
-            if thr is None or mu is None or sigma_eff is None:
-                skipped_no_threshold += 1
-                continue
-
-            thr = float(thr)
-            mu = float(mu)
-            sigma_eff = max(float(sigma_eff), SIGMA_FLOOR)
-
-            z_score = (float(best_dist) - mu) / sigma_eff
-            is_defect = float(best_dist) > thr
-            paired += 1
-
-            row = {
-                "filename": filename,
-                "full_path": None,   # fill later only for defect patches
-                "r": int(r),
-                "c": int(c),
-                "distance": float(best_dist),
-                "nearest_ref": nearest_ref_name,
-                "mahalanobis_mode": mahal_stats.get("mode") if mahal_stats is not None else None,
-                "mahalanobis_num_samples": int(mahal_stats.get("num_samples", 0)) if mahal_stats is not None else None,
-                "ang_dist_rad": float(ang_dist) if ang_dist is not None else None,
-                "threshold_used": float(thr),
-                "mu_used": float(mu),
-                "sigma_used": float(sigma_eff),
-                "z_score": float(z_score),
-                "classification": "DEFECT" if is_defect else "GOOD",
-            }
-            rows.append(row)
-
-            raw_compare_rows.append({
-                "filename": filename,
-                "r": int(r),
-                "c": int(c),
-                "distance": float(best_dist),
-                "nearest_ref": nearest_ref_name,
-            })
-
-            visual_records.append({
-                "r": int(r),
-                "c": int(c),
-                "patch": patch,
-                "distance": float(best_dist),
-                "classification": row["classification"],
-                "filename": filename,
-            })
-
-    print(
-        f"[{DISTANCE_METRIC.upper()}] total={total} | paired={paired} | "
-        f"skip_no_rc={skipped_no_rc} | skip_no_ref={skipped_no_ref} | "
-        f"skip_black_bg={skipped_black_bg} | skip_no_threshold={skipped_no_threshold}"
-    )
-
-    df = pd.DataFrame(rows)
-    SAVE_RAW_COMPARE_CSV = False   # set True only for debugging
-    out_csv = os.path.join(save_dir, "patch_distance_results.csv")
-    df.to_csv(out_csv, index=False)
-
-    if SAVE_RAW_COMPARE_CSV:
-        raw_compare_csv = os.path.join(save_dir, "patch_all_reference_distances.csv")
-        pd.DataFrame(raw_compare_rows).to_csv(raw_compare_csv, index=False)
-
-    stitched_template_path = None
-
-    if visual_records:
-        ph, pw = visual_records[0]["patch"].shape[:2]
-        max_r = max(int(x["r"]) for x in visual_records)
-        max_c = max(int(x["c"]) for x in visual_records)
-
-        canvas = np.zeros(((max_r + 1) * ph, (max_c + 1) * pw, 3), dtype=np.uint8)
-
-        for rec in visual_records:
-            patch = rec["patch"]
-            if patch.ndim == 2:
-                patch_bgr = cv2.cvtColor(patch, cv2.COLOR_GRAY2BGR)
-            else:
-                patch_bgr = patch.copy()
-
-            y0 = int(rec["r"]) * ph
-            x0 = int(rec["c"]) * pw
-            canvas[y0:y0 + ph, x0:x0 + pw] = patch_bgr
-
-            if rec["classification"] == "DEFECT":
-                color = (0, 0, 255)
-                cv2.rectangle(canvas, (x0, y0), (x0 + pw, y0 + ph), color, 2)
-                cv2.putText(
-                    canvas,
-                    f"{rec['distance']:.2f}",
-                    (x0 + 5, y0 + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45,
-                    color,
-                    1,
-                    cv2.LINE_AA,
-                )
-
-        stitched_template_path = os.path.join(save_dir, "template_stitched.png")
-        cv2.imwrite(stitched_template_path, canvas)
-
-    # save only defect patches for YOLO
-    if not df.empty:
-        defect_cache_dir = os.path.join(save_dir, "defect_patch_cache")
-        os.makedirs(defect_cache_dir, exist_ok=True)
-
-        filename_to_patch = {x["filename"]: x["patch"] for x in visual_records}
-
-        for idx, row in df.iterrows():
-            if row["classification"] != "DEFECT":
-                continue
-
-            patch = filename_to_patch.get(row["filename"])
-            if patch is None:
-                continue
-
-            defect_path = os.path.join(defect_cache_dir, row["filename"])
-            cv2.imwrite(defect_path, patch)
-            df.at[idx, "full_path"] = defect_path
-
-    return df, stitched_template_path
-
-# =========================================================
-# BATCH INFERENCE HELPERS (ADD AFTER ALL EXISTING FUNCTIONS)
-# =========================================================
-
-@torch.inference_mode()
-def get_patch_embeddings_batched(model, patch_records_by_side, device, tfm=None):
-    """
-    Batch patches from multiple sides together.
-    """
-    if tfm is None:
-        tfm = _build_transform()
-    
-    all_imgs = []
-    all_metadata = []
-    
-    for side_name, patch_records in patch_records_by_side.items():
-        for idx, rec in enumerate(patch_records):
-            try:
-                rgb = cv2.cvtColor(rec["patch"], cv2.COLOR_GRAY2RGB)
-                pil = Image.fromarray(rgb)
-                all_imgs.append(tfm(pil))
-                all_metadata.append((side_name, idx, rec))
-            except Exception:
-                pass
-    
-    if not all_imgs:
-        return {}, {}
-    
-    batch = torch.stack(all_imgs).to(device, non_blocking=True)
-    if device == "cuda":
-        batch = batch.half()
-    
-    if USE_INTERMEDIATE_BLOCKS:
-        all_embs = extract_vit_features(
-            model=model,
-            batch=batch,
-            target_block_indices=TARGET_BLOCK_INDICES,
-            fusion=BLOCK_FUSION,
-            normalize_each_block=NORMALIZE_EACH_BLOCK,
-            normalize_final=NORMALIZE_EMBEDDINGS,
-        )
-    else:
-        tokens = model.encoder.forward_features(batch)
-        patch_tokens = tokens[:, 1:, :]
-        all_embs = patch_tokens.mean(dim=1)
-        if NORMALIZE_EMBEDDINGS:
-            all_embs = F.normalize(all_embs, dim=1)
-    
-    all_embs = all_embs.detach().cpu()
-    
-    embeddings_by_side = defaultdict(list)
-    valid_records_by_side = defaultdict(list)
-    
-    for emb, (side_name, orig_idx, rec) in zip(all_embs, all_metadata):
-        embeddings_by_side[side_name].append(emb)
-        valid_records_by_side[side_name].append(rec)
-    
-    for side_name in embeddings_by_side:
-        embeddings_by_side[side_name] = torch.stack(embeddings_by_side[side_name])
-    
-    return embeddings_by_side, valid_records_by_side
-
 
 def process_precomputed_embeddings(embeddings, valid_records, runtime, save_dir, defect_cache_dir=None):
     """
@@ -3352,20 +2128,52 @@ def process_precomputed_embeddings(embeddings, valid_records, runtime, save_dir,
         thr = float(thr)
         mu = float(mu)
         sigma_eff = max(float(sigma_eff), SIGMA_FLOOR)
-        
-        z_score = (float(best_dist) - mu) / sigma_eff
-        is_defect = float(best_dist) > thr
-        
+
+        distance = float(best_dist)
+
+        # =========================================================
+        # EXTRA DEFECT DECISION SCORES
+        # =========================================================
+        z_score = (distance - mu) / sigma_eff
+
+        if thr > 1e-9:
+            score_ratio = distance / thr
+        else:
+            score_ratio = 0.0
+
+        distance_pass = distance > thr
+        z_score_pass = z_score >= Z_SCORE_THRESHOLD
+        score_ratio_pass = score_ratio >= SCORE_RATIO_THRESHOLD
+
+        is_defect = distance_pass
+
+        if USE_Z_SCORE_FILTER:
+            is_defect = is_defect and z_score_pass
+
+        if USE_SCORE_RATIO_FILTER:
+            is_defect = is_defect and score_ratio_pass
+
         row = {
             "filename": filename,
             "full_path": None,
             "r": int(r),
             "c": int(c),
-            "distance": float(best_dist),
-            "threshold_used": thr,
-            "mu_used": mu,
-            "sigma_used": sigma_eff,
+
+            "distance": float(distance),
+            "threshold_used": float(thr),
+            "mu_used": float(mu),
+            "sigma_used": float(sigma_eff),
+
             "z_score": float(z_score),
+            "score_ratio": float(score_ratio),
+
+            "distance_pass": bool(distance_pass),
+            "z_score_pass": bool(z_score_pass),
+            "score_ratio_pass": bool(score_ratio_pass),
+
+            "z_score_threshold": float(Z_SCORE_THRESHOLD),
+            "score_ratio_threshold": float(SCORE_RATIO_THRESHOLD),
+
             "classification": "DEFECT" if is_defect else "GOOD",
         }
         rows.append(row)
@@ -3374,7 +2182,10 @@ def process_precomputed_embeddings(embeddings, valid_records, runtime, save_dir,
             "r": int(r),
             "c": int(c),
             "patch": patch,
-            "distance": float(best_dist),
+            "distance": float(distance),
+            "threshold_used": float(thr),
+            "z_score": float(z_score),
+            "score_ratio": float(score_ratio),
             "classification": row["classification"],
             "filename": filename,
         })
@@ -3407,6 +2218,14 @@ def process_precomputed_embeddings(embeddings, valid_records, runtime, save_dir,
         
         stitched_path = os.path.join(save_dir, "template_stitched.png")
         cv2.imwrite(stitched_path, canvas)
+
+        out_csv = os.path.join(save_dir, "patch_distance_results.csv")
+        df.to_csv(out_csv, index=False)
+        print(f"[SAVE] {out_csv}")
+
+        raw_compare_csv = os.path.join(save_dir, "patch_all_reference_distances.csv")
+        pd.DataFrame(rows).to_csv(raw_compare_csv, index=False)
+        print(f"[SAVE] {raw_compare_csv}")
     
     if not df.empty:
         if defect_cache_dir is None:

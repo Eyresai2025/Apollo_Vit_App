@@ -22,9 +22,9 @@ from src.COMMON.model_validation_service import run_validation_for_sku
 from src.training.central_vit_trainer import run_training_for_sku
 
 try:
-    from src.camera.cam_connections import capture_images_from_all_cameras  # type: ignore
+    from src.camera.new_sku_software_capture import capture_new_sku_images # type: ignore
 except Exception:
-    capture_images_from_all_cameras = None
+    capture_new_sku_images = None
 
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
@@ -313,6 +313,49 @@ class TrainingWorker(QThread):
         except Exception as e:
             self.error_signal.emit(str(e))
 
+class CaptureWorker(QThread):
+    status_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(dict)
+    error_signal = pyqtSignal(str)
+
+    def __init__(
+        self,
+        sku_name: str,
+        media_path: str,
+        images_per_camera: int,
+        train_good_count: int = 10,
+        multi_camera_manager=None,
+        sku_meta=None,
+        meta_collection: str = "New SKU",
+        gridfs_bucket: str = "fs",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.sku_name = sku_name
+        self.media_path = media_path
+        self.images_per_camera = images_per_camera
+        self.train_good_count = train_good_count
+        self.multi_camera_manager = multi_camera_manager
+        self.sku_meta = dict(sku_meta or {})
+        self.meta_collection = meta_collection
+        self.gridfs_bucket = gridfs_bucket
+
+    def run(self):
+        try:
+            result = capture_new_sku_images(
+                sku_name=self.sku_name,
+                media_path=self.media_path,
+                images_per_camera=self.images_per_camera,
+                train_good_count=self.train_good_count,
+                multi_camera_manager=self.multi_camera_manager,
+                sku_meta=self.sku_meta,
+                meta_collection=self.meta_collection,
+                gridfs_bucket=self.gridfs_bucket,
+                logger=self.status_signal.emit,
+            )
+            self.finished_signal.emit(result or {})
+        except Exception as e:
+            self.error_signal.emit(str(e))
 
 class NewSKUPage(QWidget):
     def __init__(
@@ -326,6 +369,7 @@ class NewSKUPage(QWidget):
         sku_meta=None,
         on_close=None,
         plc_client=None,
+        multi_camera_manager=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -340,6 +384,7 @@ class NewSKUPage(QWidget):
         self.sku_meta.pop("machine_serial", None)  # removed by requirement
         self.on_close = on_close
         self.plc_client = plc_client
+        self.multi_camera_manager = multi_camera_manager
 
         self.labels = ["SIDE WALL 1", "SIDE WALL 2", "INNER SIDE", "TREAD", "BEAD"]
 
@@ -354,7 +399,7 @@ class NewSKUPage(QWidget):
         self.training_in_progress = False
         self.latest_preview_paths: Dict[str, str] = {}
         self.training_worker: Optional[TrainingWorker] = None
-
+        self.capture_worker: Optional[CaptureWorker] = None
         self.recipe_service = RecipeService(
             media_path=self.media_path,
             plc_client=self.plc_client,
@@ -410,12 +455,64 @@ class NewSKUPage(QWidget):
         self.preview_timer.start(1500)
         QTimer.singleShot(0, self.refresh_preview_only)
 
+
+    def _on_capture_status(self, message: str):
+        if self.status_lbl is not None:
+            self.status_lbl.setText(str(message))
+
+
+    def _on_capture_finished(self, result: dict):
+        self.latest_preview_paths = result or {}
+        self._update_preview_from_latest()
+
+        sku_name = _safe_name(self._get_sku_name())
+
+        if self.status_lbl is not None:
+            self.status_lbl.setText(
+                f"Capture completed. Saved in media/new_sku_images/{sku_name}/<camera_serial>/"
+            )
+
+        QMessageBox.information(
+            self,
+            "Capture Complete",
+            f"Images saved in:\nmedia/new_sku_images/{sku_name}/<camera_serial>/",
+        )
+
+        self.capture_in_progress = False
+        self._set_controls_enabled(True)
+
+        if self.preview_timer:
+            self.preview_timer.start(1500)
+
+        if self.capture_worker is not None:
+            self.capture_worker.deleteLater()
+            self.capture_worker = None
+
+
+    def _on_capture_error(self, message: str):
+        QMessageBox.critical(self, "Capture Error", str(message))
+
+        if self.status_lbl is not None:
+            self.status_lbl.setText(f"Capture failed: {message}")
+
+        self.capture_in_progress = False
+        self._set_controls_enabled(True)
+
+        if self.preview_timer:
+            self.preview_timer.start(1500)
+
+        if self.capture_worker is not None:
+            self.capture_worker.deleteLater()
+            self.capture_worker = None
     def set_plc_client(self, plc_client):
         self.plc_client = plc_client
 
         if hasattr(self, "recipe_service") and self.recipe_service is not None:
             if hasattr(self.recipe_service, "set_plc_client"):
                 self.recipe_service.set_plc_client(plc_client)
+
+    def set_multi_camera_manager(self, multi_camera_manager):
+        self.multi_camera_manager = multi_camera_manager
     # ======================================================================
     # THEME HELPERS
     # ======================================================================
@@ -1719,130 +1816,88 @@ class NewSKUPage(QWidget):
     def confirm_and_start_capture(self):
         if self.capture_in_progress or self.training_in_progress:
             return
+
         total, good_count, expected = self._get_capture_plan()
         sku_name = self._get_sku_name()
+
         msg = (
             f"Capture {total} images per camera for SKU: {sku_name}\n\n"
-            f"Expected cameras/zones: {expected}\n\n"
-            f"First {good_count} images will be saved in:\n    train/good\n\n"
-            f"Remaining {total - good_count} images will be saved in:\n    camera serial folder\n\n"
-            "Use one GOOD tyre for this capture.\n\nAfter placing the good tyre, click OK to start capture."
+            f"Save path:\n"
+            f"media/new_sku_images/{_safe_name(sku_name)}/<camera_serial>/\n\n"
+            "After placing the tyre, click OK.\n"
+            "Then software trigger will capture images from connected cameras."
         )
-        reply = QMessageBox.question(self, "Start New SKU Capture", msg, QMessageBox.Ok | QMessageBox.Cancel, QMessageBox.Cancel)
+
+        reply = QMessageBox.question(
+            self,
+            "Start New SKU Capture",
+            msg,
+            QMessageBox.Ok | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+
         if reply == QMessageBox.Ok:
             self.start_capture()
+
 
     def start_capture(self):
         if self.capture_in_progress or self.training_in_progress:
             return
-        if capture_images_from_all_cameras is None:
+
+        if capture_new_sku_images is None:
             QMessageBox.critical(
                 self,
                 "Capture Error",
-                "capture_images_from_all_cameras could not be imported.\nCheck src/camera/cam_connections.py.",
+                "capture_new_sku_images could not be imported.\n"
+                "Check src/camera/new_sku_software_capture.py",
+            )
+            return
+
+        if self.multi_camera_manager is None:
+            QMessageBox.critical(
+                self,
+                "Camera Error",
+                "No connected camera manager found.\n\n"
+                "Please run Test Mode first and connect cameras."
             )
             return
 
         self.capture_in_progress = True
         self._set_controls_enabled(False)
+
         if self.preview_timer:
             self.preview_timer.stop()
+
         self._switch_tab(TAB_CAPTURE)
 
         images_per_camera, good_folder_count, expected_cameras = self._get_capture_plan()
-        sku_name = self._get_sku_name()
-        sku_folder = _safe_name(sku_name)
-        base_out_dir = _ensure_dir(os.path.join(self.media_path, "new_sku_images", sku_folder))
-        session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        sku_name = _safe_name(self._get_sku_name())
+
         self.latest_preview_paths = {}
 
         if self.status_lbl is not None:
             self.status_lbl.setText(
-                f"Starting capture | SKU={sku_name} | Images/camera={images_per_camera} | "
-                f"Train good={good_folder_count} | Expected cameras={expected_cameras}"
+                f"Starting software capture | SKU={sku_name} | "
+                f"Images/camera={images_per_camera} | Train good={good_folder_count}"
             )
-        QApplication.processEvents()
 
-        try:
-            for shot_idx in range(1, images_per_camera + 1):
-                pct = int((shot_idx / images_per_camera) * 100)
-                if self.status_lbl is not None:
-                    self.status_lbl.setText(f"Capturing set {shot_idx}/{images_per_camera} ({pct}%) ...")
-                QApplication.processEvents()
+        self.capture_worker = CaptureWorker(
+            sku_name=sku_name,
+            media_path=self.media_path,
+            images_per_camera=images_per_camera,
+            train_good_count=good_folder_count,
+            multi_camera_manager=self.multi_camera_manager,
+            sku_meta=self.sku_meta,
+            meta_collection=self.meta_collection,
+            gridfs_bucket=self.gridfs_bucket,
+            parent=self,
+        )
 
-                captured_results = capture_images_from_all_cameras(expected_cameras=expected_cameras)
-                if not captured_results:
-                    raise Exception(f"No images captured in set {shot_idx}")
-                if len(captured_results) != expected_cameras:
-                    raise Exception(f"Expected {expected_cameras} camera images, but got {len(captured_results)} in set {shot_idx}")
+        self.capture_worker.status_signal.connect(self._on_capture_status)
+        self.capture_worker.finished_signal.connect(self._on_capture_finished)
+        self.capture_worker.error_signal.connect(self._on_capture_error)
 
-                capture_stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                for serial, image in captured_results:
-                    serial_str = _safe_name(str(serial))
-                    serial_base_dir = _ensure_dir(os.path.join(base_out_dir, serial_str))
-
-                    if shot_idx <= good_folder_count:
-                        save_dir = _ensure_dir(os.path.join(serial_base_dir, "train", "good"))
-                        save_group = "train_good"
-                    else:
-                        save_dir = serial_base_dir
-                        save_group = "serial_root_calibration_reference"
-
-                    file_name = f"{serial_str}_{capture_stamp}_{shot_idx:03d}.png"
-                    file_path = os.path.join(save_dir, file_name)
-                    ok = cv2.imwrite(file_path, image)
-                    if not ok:
-                        raise Exception(f"Failed to save image: {file_path}")
-
-                    self.latest_preview_paths[serial_str] = file_path
-                    db_meta = dict(self.sku_meta or {})
-                    db_meta.pop("machine_serial", None)
-                    db_meta.update({
-                        "sku_name": sku_name,
-                        "sku_folder": sku_folder,
-                        "camera_serial": serial_str,
-                        "session_id": session_id,
-                        "capture_index": shot_idx,
-                        "total_images_per_camera": images_per_camera,
-                        "train_good_count": good_folder_count,
-                        "expected_cameras": expected_cameras,
-                        "save_group": save_group,
-                        "saved_dir": save_dir,
-                        "saved_file": file_name,
-                        "saved_path": file_path,
-                        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    })
-
-                    save_new_sku_image(
-                        file_path=file_path,
-                        label=serial_str,
-                        capture_id=session_id,
-                        sku_meta=db_meta,
-                        meta_collection=self.meta_collection,
-                        gridfs_bucket=self.gridfs_bucket,
-                    )
-
-                self._update_preview_from_latest()
-                QApplication.processEvents()
-
-            if self.status_lbl is not None:
-                self.status_lbl.setText(f"Completed | {images_per_camera} images per camera saved for SKU={sku_name}")
-            QMessageBox.information(
-                self,
-                "Capture Complete",
-                f"{images_per_camera} images per camera captured successfully.\n\n"
-                f"First {good_folder_count} images saved in train/good.\n"
-                f"Remaining {images_per_camera - good_folder_count} images saved in camera serial folder.",
-            )
-        except Exception as e:
-            if self.status_lbl is not None:
-                self.status_lbl.setText("Capture failed")
-            QMessageBox.critical(self, "Capture Error", str(e))
-        finally:
-            self.capture_in_progress = False
-            self._set_controls_enabled(True)
-            if self.preview_timer:
-                self.preview_timer.start(1500)
+        self.capture_worker.start()
 
     # ======================================================================
     # F-018 TRAINING

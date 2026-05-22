@@ -157,6 +157,46 @@ class FullHardwareChecker:
             "bit": _env_int(self.env, "APP_OK_BIT", 4),
         }
 
+
+        self.camera_status_write_enabled = _env_bool(
+            self.env,
+            "CAMERA_STATUS_WRITE_ENABLED",
+            True,
+        )
+
+        self.camera_status_required = _env_bool(
+            self.env,
+            "CAMERA_STATUS_REQUIRED_FOR_APP_OK",
+            True,
+        )
+
+        self.camera_status_bits = {
+            "sidewall1": {
+                "db": _env_int(self.env, "PLC_SW1_CAMERA_STATUS_DB", 74),
+                "byte": _env_int(self.env, "PLC_SW1_CAMERA_STATUS_BYTE", 86),
+                "bit": _env_int(self.env, "PLC_SW1_CAMERA_STATUS_BIT", 1),
+            },
+            "sidewall2": {
+                "db": _env_int(self.env, "PLC_SW2_CAMERA_STATUS_DB", 74),
+                "byte": _env_int(self.env, "PLC_SW2_CAMERA_STATUS_BYTE", 86),
+                "bit": _env_int(self.env, "PLC_SW2_CAMERA_STATUS_BIT", 2),
+            },
+            "tread": {
+                "db": _env_int(self.env, "PLC_TREAD_CAMERA_STATUS_DB", 74),
+                "byte": _env_int(self.env, "PLC_TREAD_CAMERA_STATUS_BYTE", 86),
+                "bit": _env_int(self.env, "PLC_TREAD_CAMERA_STATUS_BIT", 3),
+            },
+            "innerwall": {
+                "db": _env_int(self.env, "PLC_INNER_CAMERA_STATUS_DB", 74),
+                "byte": _env_int(self.env, "PLC_INNER_CAMERA_STATUS_BYTE", 86),
+                "bit": _env_int(self.env, "PLC_INNER_CAMERA_STATUS_BIT", 4),
+            },
+            "bead": {
+                "db": _env_int(self.env, "PLC_BEAD_CAMERA_STATUS_DB", 74),
+                "byte": _env_int(self.env, "PLC_BEAD_CAMERA_STATUS_BYTE", 86),
+                "bit": _env_int(self.env, "PLC_BEAD_CAMERA_STATUS_BIT", 5),
+            },
+        }
     # --------------------------------------------------------
     # PLC
     # --------------------------------------------------------
@@ -302,7 +342,113 @@ class FullHardwareChecker:
         except Exception as e:
             detail["message"] = f"Failed to write/verify Application OK bit at {address}: {e}"
             return False, detail
+    def _send_camera_status_bits(self, client, camera_status):
+        """
+        Writes each logical camera connection status to PLC.
 
+        sidewall1 -> DB74.DBX86.1
+        sidewall2 -> DB74.DBX86.2
+        tread     -> DB74.DBX86.3
+        innerwall -> DB74.DBX86.4
+        bead      -> DB74.DBX86.5
+        """
+
+        detail = {
+            "enabled": bool(self.camera_status_write_enabled),
+            "sent": False,
+            "verified": False,
+            "items": [],
+            "message": "-",
+        }
+
+        if not self.camera_status_write_enabled:
+            detail["sent"] = True
+            detail["verified"] = True
+            detail["message"] = "Camera status PLC bit writing is disabled."
+            return True, detail
+
+        if str(self.deployment) != "True":
+            detail["sent"] = True
+            detail["verified"] = "DEMO PASS"
+            detail["message"] = "DEPLOYMENT=False. Camera status bits demo pass."
+
+            for side, addr in self.camera_status_bits.items():
+                detail["items"].append({
+                    "side": side,
+                    "address": f"DB{addr['db']}.DBX{addr['byte']}.{addr['bit']}",
+                    "value_written": "DEMO PASS",
+                    "read_back_value": "DEMO PASS",
+                    "verified": "DEMO PASS",
+                })
+
+            return True, detail
+
+        if client is None:
+            detail["message"] = "Camera status bits not sent because PLC client is None."
+            return False, detail
+
+        status_by_side = {
+            str(item.get("side", "")).strip().lower(): bool(item.get("connected", False))
+            for item in camera_status or []
+        }
+
+        try:
+            all_verified = True
+
+            for side, addr in self.camera_status_bits.items():
+                value_to_write = bool(status_by_side.get(side, False))
+
+                db = int(addr["db"])
+                byte = int(addr["byte"])
+                bit = int(addr["bit"])
+                address = f"DB{db}.DBX{byte}.{bit}"
+
+                self._write_db_bit(
+                    client=client,
+                    db_number=db,
+                    byte_index=byte,
+                    bit_index=bit,
+                    value=value_to_write,
+                )
+
+                time.sleep(0.02)
+
+                read_back = self._read_db_bit(
+                    client=client,
+                    db_number=db,
+                    byte_index=byte,
+                    bit_index=bit,
+                )
+
+                verified = bool(read_back) == bool(value_to_write)
+                all_verified = all_verified and verified
+
+                detail["items"].append({
+                    "side": side,
+                    "address": address,
+                    "value_written": value_to_write,
+                    "read_back_value": bool(read_back),
+                    "verified": verified,
+                })
+
+                print(
+                    f"[PLC][CAMERA_STATUS] {side} -> {address} "
+                    f"write={value_to_write} read_back={bool(read_back)} verified={verified}"
+                )
+
+            detail["sent"] = True
+            detail["verified"] = bool(all_verified)
+
+            if all_verified:
+                detail["message"] = "Camera status bits written and verified in PLC."
+                return True, detail
+
+            detail["message"] = "One or more camera status PLC bits failed read-back verification."
+            return False, detail
+
+        except Exception as e:
+            detail["message"] = f"Failed to write/verify camera status PLC bits: {e}"
+            return False, detail
     # --------------------------------------------------------
     # LIGHT MANUAL FEEDBACK
     # --------------------------------------------------------
@@ -530,6 +676,15 @@ class FullHardwareChecker:
         result["details"]["camera"] = camera_detail
         result["messages"].append(camera_msg)
 
+        camera_status_bits_ok, camera_status_bits_detail = self._send_camera_status_bits(
+            client=plc_client,
+            camera_status=camera_detail.get("camera_status", []),
+        )
+
+        result["camera_status_bits_ok"] = camera_status_bits_ok
+        result["details"]["camera_status_bits"] = camera_status_bits_detail
+        result["messages"].append(camera_status_bits_detail.get("message", "-"))
+
         laser_ok, laser_msg, laser_detail = self._check_teledyne_laser()
         result["laser_ok"] = laser_ok
         result["details"]["laser"] = laser_detail
@@ -538,10 +693,17 @@ class FullHardwareChecker:
         lights_required_ok = result["lights_ok"] if self.require_lights else True
         laser_required_ok = result["laser_ok"] if self.require_laser else True
 
+        camera_status_required_ok = (
+            result.get("camera_status_bits_ok", False)
+            if self.camera_status_required
+            else True
+        )
+
         checks_ok_before_app_bit = (
             lights_required_ok
             and result["plc_ok"]
             and result["camera_ok"]
+            and camera_status_required_ok
             and laser_required_ok
         )
 

@@ -1,452 +1,736 @@
+import os
+import json
 import cv2
-import math
 import numpy as np
-import onnxruntime as ort
+
+from src.models.Pipeline import inner_bead_tread_alignment as xalign
 
 
-# =========================================================
-# DEFAULTS
-# =========================================================
-IMG_SIZE = 640
-DEFAULT_CONF_THRES = 0.4
-DEFAULT_IOU_THRES = 0.45
+# ============================================================
+# OFFSET RATIO LOADING
+# ============================================================
 
-
-# =========================================================
-# BUILD DETECTOR
-# =========================================================
-def build_r_detector(model_path, conf=0.4, device="cuda"):
+def load_offset_ratio_from_json(json_path, side_name):
     """
-    ONNX-based replacement for the old SAHI/Ultralytics detector.
+    Supports both formats:
 
-    Returns a dict-style detector object.
+    Format 1:
+        {
+            "tread": 0.045,
+            "innerwall": 0.012,
+            "bead": 0.018
+        }
+
+    Format 2:
+        {
+            "final_offsets": {
+                "tread": {"offset_ratio": 0.045},
+                "innerwall": {"offset_ratio": 0.012},
+                "bead": {"offset_ratio": 0.018}
+            }
+        }
     """
-    providers = []
-    dev = str(device).lower() if device is not None else "cpu"
-    if dev.startswith("cuda"):
-        providers.append("CUDAExecutionProvider")
-    providers.append("CPUExecutionProvider")
+    if not json_path or not os.path.exists(json_path):
+        raise RuntimeError(f"Offset JSON not found: {json_path}")
 
-    session = ort.InferenceSession(model_path, providers=providers)
-    input_name = session.get_inputs()[0].name
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
-    det_model = {
-        "session": session,
-        "input_name": input_name,
-        "conf": float(conf if conf is not None else DEFAULT_CONF_THRES),
-        "iou": float(DEFAULT_IOU_THRES),
-        "img_size": int(IMG_SIZE),
-        "providers": providers,
-        "model_path": model_path,
-        "device": device,
+    side_name = side_name.lower().strip()
+
+    if "final_offsets" in data:
+        final_offsets = data["final_offsets"]
+        if side_name not in final_offsets:
+            raise KeyError(f"'{side_name}' missing in final_offsets of {json_path}")
+        return float(final_offsets[side_name]["offset_ratio"])
+
+    if side_name in data:
+        return float(data[side_name])
+
+    raise KeyError(f"Offset ratio for '{side_name}' not found in {json_path}")
+
+
+# ============================================================
+# R ANCHOR FROM SIDEWALL CROP META
+# ============================================================
+
+def extract_sidewall_r_anchor_from_meta(crop_meta):
+    """
+    crop_meta comes from R_detection_onnx_align_crop.align_and_crop_to_reference().
+    That meta contains crop_y1 and crop_y2, which are the raw sidewall R1/R2 crop limits.
+    """
+    if crop_meta is None:
+        raise RuntimeError("crop_meta is None. Cannot extract sidewall R anchor.")
+
+    if "crop_y1" not in crop_meta or "crop_y2" not in crop_meta:
+        raise RuntimeError(f"crop_meta missing crop_y1/crop_y2: {crop_meta}")
+
+    r1 = int(crop_meta["crop_y1"])
+    r2 = int(crop_meta["crop_y2"])
+
+    if r2 <= r1:
+        raise RuntimeError(f"Invalid sidewall R anchor: R1={r1}, R2={r2}")
+
+    return {
+        "r1_top_y": r1,
+        "r2_top_y": r2,
+        "one_rev_height": int(r2 - r1),
     }
 
-    print(f"[ONNX R] loaded model: {model_path}")
-    print(f"[ONNX R] providers   : {session.get_providers()}")
-    print(f"[ONNX R] conf        : {det_model['conf']}")
-    return det_model
+
+# ============================================================
+# OFFSET CROP
+# ============================================================
+
+def calculate_offset_crop_window(r1_top_y, r2_top_y, offset_ratio, image_height, side_name):
+    r1_top_y = int(r1_top_y)
+    r2_top_y = int(r2_top_y)
+
+    if r2_top_y <= r1_top_y:
+        raise RuntimeError(f"[{side_name}] Invalid R1/R2: R1={r1_top_y}, R2={r2_top_y}")
+
+    one_rev_height = r2_top_y - r1_top_y
+
+    start_y = int(round(r1_top_y + float(offset_ratio) * one_rev_height))
+    end_y = start_y + one_rev_height
+
+    if start_y < 0:
+        raise RuntimeError(
+            f"[{side_name}] crop start is negative: {start_y}. "
+            f"Check offset ratio or capture extra lines."
+        )
+
+    if end_y > image_height:
+        raise RuntimeError(
+            f"[{side_name}] crop end exceeds image height: "
+            f"end_y={end_y}, image_height={image_height}. "
+            f"Check offset ratio or capture extra lines."
+        )
+
+    return start_y, end_y, one_rev_height
 
 
-# =========================================================
-# HELPERS
-# =========================================================
-def _ensure_bgr(image_bgr):
-    if image_bgr is None:
-        return None
-    if image_bgr.ndim == 2:
-        return cv2.cvtColor(image_bgr, cv2.COLOR_GRAY2BGR)
-    return image_bgr
-
-
-def _preprocess_patch(img_bgr, img_size):
-    x = cv2.resize(img_bgr, (img_size, img_size), interpolation=cv2.INTER_LINEAR)
-    x = cv2.cvtColor(x, cv2.COLOR_BGR2RGB)
-    x = x.astype(np.float32) / 255.0
-    x = np.transpose(x, (2, 0, 1))[None, ...]
-    return x
-
-
-def _apply_nms_xywh(boxes_xywh, scores, conf_thres, iou_thres):
-    if not boxes_xywh:
-        return []
-
-    idxs = cv2.dnn.NMSBoxes(boxes_xywh, scores, conf_thres, iou_thres)
-    if idxs is None or len(idxs) == 0:
-        return []
-
-    return np.array(idxs).reshape(-1).tolist()
-
-
-def _run_patch_inference(patch_bgr, off_x, off_y, det_model):
-    session = det_model["session"]
-    input_name = det_model["input_name"]
-    img_size = det_model["img_size"]
-    conf_thres = det_model["conf"]
-    iou_thres = det_model["iou"]
-
-    inp = _preprocess_patch(patch_bgr, img_size)
-    outputs = session.run(None, {input_name: inp})[0]
-
-    if outputs.ndim == 3:
-        outputs = outputs[0]
-
-    patch_h, patch_w = patch_bgr.shape[:2]
-    sx = patch_w / float(img_size)
-    sy = patch_h / float(img_size)
-
-    boxes_xywh = []
-    scores = []
-    candidates = []
-
-    for det in outputs:
-        if len(det) < 5:
-            continue
-
-        x1, y1, x2, y2, conf = det[:5]
-        conf = float(conf)
-
-        if conf < conf_thres:
-            continue
-
-        x1 = float(x1) * sx + off_x
-        y1 = float(y1) * sy + off_y
-        x2 = float(x2) * sx + off_x
-        y2 = float(y2) * sy + off_y
-
-        w = max(0.0, x2 - x1)
-        h = max(0.0, y2 - y1)
-        if w <= 1 or h <= 1:
-            continue
-
-        boxes_xywh.append([int(round(x1)), int(round(y1)), int(round(w)), int(round(h))])
-        scores.append(conf)
-        candidates.append([float(x1), float(y1), float(x2), float(y2), conf])
-
-    keep = _apply_nms_xywh(boxes_xywh, scores, conf_thres, iou_thres)
-    return [candidates[i] for i in keep]
-
-
-def _global_nms_xyxy(dets_xyxy_conf, conf_thres, iou_thres):
-    if not dets_xyxy_conf:
-        return []
-
-    boxes_xywh = []
-    scores = []
-    for x1, y1, x2, y2, conf in dets_xyxy_conf:
-        boxes_xywh.append([
-            int(round(x1)),
-            int(round(y1)),
-            int(round(max(0.0, x2 - x1))),
-            int(round(max(0.0, y2 - y1))),
-        ])
-        scores.append(float(conf))
-
-    keep = _apply_nms_xywh(boxes_xywh, scores, conf_thres, iou_thres)
-    return [dets_xyxy_conf[i] for i in keep]
-
-
-def _run_onnx_on_image(image_bgr, det_model, slice_h, slice_w):
-    if image_bgr is None:
-        raise RuntimeError("image_bgr is None")
-
-    image_bgr = _ensure_bgr(image_bgr)
-    H, W = image_bgr.shape[:2]
-
-    rows = math.ceil(H / slice_h)
-    cols = math.ceil(W / slice_w)
-    expected_slices = rows * cols
-    print(f"[DEBUG] ONNX input shape: {(H, W)} | slice=({slice_h}, {slice_w}) | expected_slices={expected_slices}")
-
-    all_dets = []
-
-    for r in range(rows):
-        y0 = r * slice_h
-        y1 = min(H, y0 + slice_h)
-
-        for c in range(cols):
-            x0 = c * slice_w
-            x1 = min(W, x0 + slice_w)
-
-            patch = image_bgr[y0:y1, x0:x1]
-            if patch.size == 0:
-                continue
-
-            dets = _run_patch_inference(patch, x0, y0, det_model)
-            if dets:
-                all_dets.extend(dets)
-
-    return _global_nms_xyxy(all_dets, det_model["conf"], det_model["iou"])
-
-
-def _det_to_tuple_xywh(det):
-    x1, y1, x2, y2, _conf = det
-    w = max(0.0, x2 - x1)
-    h = max(0.0, y2 - y1)
-    cx = x1 + w / 2.0
-    cy = y1 + h / 2.0
-    return (float(x1), float(y1), float(w), float(h), float(cx), float(cy))
-
-
-def transform_point(M, px, py):
-    p = np.array([px, py, 1.0], dtype=np.float32)
-    q = M @ p
-    return int(round(float(q[0]))), int(round(float(q[1])))
-
-
-# =========================================================
-# R DETECTION
-# =========================================================
-def detect_two_r_from_image(image_bgr, det_model, slice_h, slice_w):
+def crop_resize_by_sidewall_anchor(pre_bgr, side_name, sidewall_r_anchor, offset_ratio, target_size):
     """
-    Match the old return style:
-        [(x, y, w, h, cx, cy), ...]
-    sorted by y-center.
+    pre_bgr is already polarized image.
+    This function only performs Y crop using sidewall R1/R2 + offset ratio,
+    then resizes to target_size.
     """
-    if image_bgr is None:
-        return []
+    if pre_bgr is None:
+        raise RuntimeError(f"[{side_name}] pre_bgr is None")
 
-    image_bgr = _ensure_bgr(image_bgr)
-    dets = _run_onnx_on_image(image_bgr, det_model, slice_h, slice_w)
+    r1 = int(sidewall_r_anchor["r1_top_y"])
+    r2 = int(sidewall_r_anchor["r2_top_y"])
 
-    if not dets:
-        return []
+    start_y, end_y, one_rev_height = calculate_offset_crop_window(
+        r1_top_y=r1,
+        r2_top_y=r2,
+        offset_ratio=offset_ratio,
+        image_height=pre_bgr.shape[0],
+        side_name=side_name,
+    )
 
-    r = [_det_to_tuple_xywh(d) for d in dets]
-    r = sorted(r, key=lambda v: v[5])  # by cy
+    crop_bgr = pre_bgr[start_y:end_y, :].copy()
 
-    if len(r) >= 2:
-        return r[:2]
-    return []
+    target_w, target_h = target_size
+    crop_bgr = cv2.resize(
+        crop_bgr,
+        (int(target_w), int(target_h)),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    crop_meta = {
+        "status": "ok",
+        "mode": "sidewall_r_anchor_offset_crop",
+        "side": side_name,
+        "r1_top_y": int(r1),
+        "r2_top_y": int(r2),
+        "one_rev_height": int(one_rev_height),
+        "offset_ratio": float(offset_ratio),
+        "crop_start_y": int(start_y),
+        "crop_end_y": int(end_y),
+        "before_resize_shape": list(pre_bgr[start_y:end_y, :].shape),
+        "after_resize_shape": list(crop_bgr.shape),
+    }
+
+    print(
+        f"[{side_name.upper()} OFFSET CROP] "
+        f"R1={r1} | R2={r2} | one_rev={one_rev_height} | "
+        f"offset={offset_ratio:.6f} | crop={start_y}:{end_y} | "
+        f"resized={crop_bgr.shape}"
+    )
+
+    return crop_bgr, crop_meta
 
 
-def get_reference_r_points(reference_bgr, det_model, slice_h, slice_w):
-    ref_r = detect_two_r_from_image(reference_bgr, det_model, slice_h, slice_w)
-    if len(ref_r) < 2:
-        return None
-    return ref_r
+# ============================================================
+# X ALIGNMENT
+# ============================================================
+
+def configure_xalign_for_side(side_name):
+    side_name = side_name.lower().strip()
+
+    xalign.SIDE_NAME = side_name
+
+    # Your latest working tread setting
+    if side_name == "tread":
+        xalign.DETECTION_METHOD_BY_SIDE["tread"] = "texture"
+        xalign.TREAD_SEARCH_X_RATIO = (0.20, 0.92)
+        xalign.TEXTURE_REFINE_WITH_SOBEL_X = False
+
+    # For bead/innerwall start with foreground.
+    # If they fail later, change their method to texture.
+    if side_name == "innerwall":
+        xalign.DETECTION_METHOD_BY_SIDE["innerwall"] = "foreground"
+
+    if side_name == "bead":
+        xalign.DETECTION_METHOD_BY_SIDE["bead"] = "foreground"
+
+# ============================================================
+# TREAD PROFILE X ALIGNMENT
+# ============================================================
+
+TREAD_PROFILE_MAX_SHIFT_PX = 350
+TREAD_PROFILE_MIN_NCC_SCORE = 0.35
+TREAD_PROFILE_ROW_ROI_RATIO = (0.05, 0.95)
+TREAD_PROFILE_REMOVE_BRIGHT_ROWS = True
+TREAD_PROFILE_BRIGHT_ROW_PERCENTILE = 97.5
+TREAD_PROFILE_BORDER_VALUE = 0
 
 
-# =========================================================
-# FIXED-BAND CROPPING
-# =========================================================
-def crop_between_fixed_y(image_bgr, y1, y2, target_size=None):
+def _profile_to_gray_float32(img):
+    if img.ndim == 2:
+        gray = img
+    elif img.ndim == 3 and img.shape[2] == 3:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    elif img.ndim == 3 and img.shape[2] == 4:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+    else:
+        raise ValueError(f"Unsupported image shape: {img.shape}")
+
+    return gray.astype(np.float32)
+
+
+def _z_norm_1d(x):
+    x = x.astype(np.float32)
+    m = float(np.mean(x))
+    s = float(np.std(x))
+
+    if s < 1e-6:
+        return x * 0.0
+
+    return (x - m) / s
+
+
+def build_tread_x_profile_signature(img):
     """
-    Crop image using FIXED y1,y2 band.
+    Builds 1D X signature for tread profile alignment.
+
+    Used only for X alignment calculation.
+    The output aligned image is not preprocessed.
     """
-    if image_bgr is None:
-        return None
+    gray = _profile_to_gray_float32(img)
+    h, w = gray.shape[:2]
 
-    image_bgr = _ensure_bgr(image_bgr)
-    H, W = image_bgr.shape[:2]
+    y1 = int(h * TREAD_PROFILE_ROW_ROI_RATIO[0])
+    y2 = int(h * TREAD_PROFILE_ROW_ROI_RATIO[1])
 
-    y1 = max(0, min(int(round(y1)), H - 1))
-    y2 = max(0, min(int(round(y2)), H - 1))
+    y1 = max(0, min(y1, h - 1))
+    y2 = max(y1 + 1, min(y2, h))
 
-    if y2 <= y1:
-        return None
+    roi = gray[y1:y2, :].copy()
+    rows_before = roi.shape[0]
 
-    crop = image_bgr[y1:y2, 0:W]
-    if crop.size == 0:
-        return None
+    # Remove very bright horizontal tape rows
+    if TREAD_PROFILE_REMOVE_BRIGHT_ROWS and roi.shape[0] > 50:
+        row_median = np.median(roi, axis=1)
+        cut = np.percentile(row_median, TREAD_PROFILE_BRIGHT_ROW_PERCENTILE)
+        valid_rows = row_median < cut
 
-    if target_size is not None:
-        target_w, target_h = target_size
-        crop = cv2.resize(crop, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        if np.sum(valid_rows) > 0.50 * len(valid_rows):
+            roi = roi[valid_rows, :]
 
-    return crop
+    rows_after = roi.shape[0]
+
+    # Row-wise normalization
+    row_med = np.median(roi, axis=1, keepdims=True)
+    row_mad = np.median(np.abs(roi - row_med), axis=1, keepdims=True)
+    row_mad[row_mad < 1.0] = 1.0
+
+    roi_norm = (roi - row_med) / row_mad
+    roi_norm = np.clip(roi_norm, -5.0, 5.0).astype(np.float32)
+
+    intensity_profile = np.median(roi_norm, axis=0).astype(np.float32)
+
+    sobel_x = cv2.Sobel(
+        roi_norm,
+        cv2.CV_32F,
+        dx=1,
+        dy=0,
+        ksize=3,
+    )
+
+    sobel_x = np.abs(sobel_x)
+    edge_profile = np.median(sobel_x, axis=0).astype(np.float32)
+
+    intensity_profile = cv2.GaussianBlur(
+        intensity_profile.reshape(1, -1),
+        (21, 1),
+        0,
+    ).flatten()
+
+    edge_profile = cv2.GaussianBlur(
+        edge_profile.reshape(1, -1),
+        (21, 1),
+        0,
+    ).flatten()
+
+    intensity_profile = _z_norm_1d(intensity_profile)
+    edge_profile = _z_norm_1d(edge_profile)
+
+    signature = 0.35 * intensity_profile + 0.65 * edge_profile
+    signature = _z_norm_1d(signature)
+
+    meta = {
+        "image_height": int(h),
+        "image_width": int(w),
+        "roi_y1": int(y1),
+        "roi_y2": int(y2),
+        "rows_before_tape_filter": int(rows_before),
+        "rows_after_tape_filter": int(rows_after),
+        "remove_bright_tape_rows": bool(TREAD_PROFILE_REMOVE_BRIGHT_ROWS),
+    }
+
+    return signature.astype(np.float32), meta
 
 
-def crop_from_reference_band_info(image_bgr, ref_info, target_size=None):
+def _normalized_cross_correlation(a, b):
+    a = a.astype(np.float32)
+    b = b.astype(np.float32)
+
+    if len(a) < 20 or len(b) < 20:
+        return -1.0
+
+    a = a - float(np.mean(a))
+    b = b - float(np.mean(b))
+
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+
+    if denom < 1e-6:
+        return -1.0
+
+    return float(np.dot(a, b) / denom)
+
+
+def find_tread_best_shift_x(ref_sig, cur_sig, max_shift_px):
+    ref_sig = ref_sig.astype(np.float32)
+    cur_sig = cur_sig.astype(np.float32)
+
+    w = min(len(ref_sig), len(cur_sig))
+    ref_sig = ref_sig[:w]
+    cur_sig = cur_sig[:w]
+
+    max_shift_px = int(min(max_shift_px, w // 3))
+
+    best_shift = 0
+    best_score = -999.0
+
+    for shift in range(-max_shift_px, max_shift_px + 1):
+        if shift > 0:
+            ref_part = ref_sig[shift:]
+            cur_part = cur_sig[:w - shift]
+        elif shift < 0:
+            s = -shift
+            ref_part = ref_sig[:w - s]
+            cur_part = cur_sig[s:]
+        else:
+            ref_part = ref_sig
+            cur_part = cur_sig
+
+        score = _normalized_cross_correlation(ref_part, cur_part)
+
+        if score > best_score:
+            best_score = score
+            best_shift = shift
+
+    return int(best_shift), float(best_score)
+
+
+def shift_image_x_same_size_profile(img, shift_x, border_value=0):
+    h, w = img.shape[:2]
+
+    M = np.float32([
+        [1, 0, int(shift_x)],
+        [0, 1, 0],
+    ])
+
+    if img.ndim == 3:
+        border = tuple([border_value] * img.shape[2])
+    else:
+        border = border_value
+
+    aligned = cv2.warpAffine(
+        img,
+        M,
+        (w, h),
+        flags=cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=border,
+    )
+
+    return aligned
+
+
+def _profile_to_uint8_display(img):
+    if img.ndim == 3 and img.dtype == np.uint8:
+        return img.copy()
+
+    gray = _profile_to_gray_float32(img)
+
+    p1 = np.percentile(gray, 1)
+    p99 = np.percentile(gray, 99)
+
+    if p99 <= p1:
+        p1 = float(gray.min())
+        p99 = float(gray.max())
+
+    if p99 <= p1:
+        out = np.zeros(gray.shape, dtype=np.uint8)
+    else:
+        out = (gray - p1) / (p99 - p1)
+        out = np.clip(out, 0, 1)
+        out = (out * 255).astype(np.uint8)
+
+    return cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
+
+
+def save_tread_profile_debug(ref_img, cur_img, aligned_img, shift_x, score, debug_save_path):
+    ref_vis = _profile_to_uint8_display(ref_img)
+    cur_vis = _profile_to_uint8_display(cur_img)
+    aligned_vis = _profile_to_uint8_display(aligned_img)
+
+    h = min(ref_vis.shape[0], cur_vis.shape[0], aligned_vis.shape[0])
+    w = min(ref_vis.shape[1], cur_vis.shape[1], aligned_vis.shape[1])
+
+    ref_vis = ref_vis[:h, :w]
+    cur_vis = cur_vis[:h, :w]
+    aligned_vis = aligned_vis[:h, :w]
+
+    cx = w // 2
+
+    cv2.line(ref_vis, (cx, 0), (cx, h - 1), (0, 255, 0), 2)
+    cv2.line(cur_vis, (cx, 0), (cx, h - 1), (0, 0, 255), 2)
+    cv2.line(aligned_vis, (cx, 0), (cx, h - 1), (0, 255, 255), 2)
+
+    cv2.putText(ref_vis, "REFERENCE", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+    cv2.putText(cur_vis, f"BEFORE shift={shift_x}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+    cv2.putText(aligned_vis, f"AFTER score={score:.3f}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+
+    debug = np.hstack([ref_vis, cur_vis, aligned_vis])
+
+    os.makedirs(os.path.dirname(debug_save_path), exist_ok=True)
+    cv2.imwrite(debug_save_path, debug)
+
+
+def apply_tread_profile_x_alignment(
+    crop_bgr,
+    artifacts_dir,
+    create_reference_if_missing=True,
+    debug_save_path=None,
+):
     """
-    Use ONLY the precomputed reference band (y1, y2) to crop.
-    No incoming-image R detection is done here.
+    Calibration:
+        first tread crop creates profile reference.
+
+    Inference:
+        incoming tread crop aligns to saved profile reference.
     """
-    if image_bgr is None:
-        return None, None, {"status": "fail", "reason": "image_none"}
+    os.makedirs(artifacts_dir, exist_ok=True)
 
-    image_bgr = _ensure_bgr(image_bgr)
+    ref_sig_path = os.path.join(artifacts_dir, "tread_x_reference_signature.npy")
+    ref_meta_path = os.path.join(artifacts_dir, "tread_x_reference_signature_meta.json")
+    ref_crop_path = os.path.join(artifacts_dir, "tread_x_reference_crop.png")
 
-    if ref_info is None:
-        return None, None, {"status": "fail", "reason": "reference_band_info_none"}
+    # --------------------------------------------------------
+    # Calibration: create reference
+    # --------------------------------------------------------
+    if create_reference_if_missing and not os.path.exists(ref_sig_path):
+        ref_sig, ref_meta = build_tread_x_profile_signature(crop_bgr)
 
-    if ref_info.get("status") != "ok":
-        return None, None, ref_info
+        np.save(ref_sig_path, ref_sig)
 
-    y1 = ref_info["y1"]
-    y2 = ref_info["y2"]
+        with open(ref_meta_path, "w", encoding="utf-8") as f:
+            json.dump(ref_meta, f, indent=4)
 
-    crop_bgr = crop_between_fixed_y(image_bgr, y1, y2, target_size=target_size)
+        cv2.imwrite(ref_crop_path, crop_bgr)
 
-    if crop_bgr is None:
-        return None, image_bgr, {
-            "status": "fail",
-            "reason": "crop_failed_reference_band_only",
-            "fixed_y1": y1,
-            "fixed_y2": y2,
+        meta = {
+            "status": "ok",
+            "mode": "created_tread_profile_reference",
+            "side": "tread",
+            "final_shift_x": 0,
+            "ncc_score": 1.0,
+            "ref_signature_path": ref_sig_path,
+            "ref_meta_path": ref_meta_path,
+            "ref_crop_path": ref_crop_path,
+            "reference_meta": ref_meta,
         }
+
+        print(f"[TREAD PROFILE XALIGN] Created reference signature: {ref_sig_path}")
+        print(f"[TREAD PROFILE XALIGN] Saved reference crop      : {ref_crop_path}")
+
+        return crop_bgr, meta
+
+    # --------------------------------------------------------
+    # Inference: load reference and align
+    # --------------------------------------------------------
+    if not os.path.exists(ref_sig_path):
+        raise RuntimeError(
+            f"[tread] Tread profile reference missing: {ref_sig_path}. "
+            f"Run tread calibration first."
+        )
+
+    if not os.path.exists(ref_crop_path):
+        raise RuntimeError(
+            f"[tread] Tread profile reference crop missing: {ref_crop_path}. "
+            f"Run tread calibration first."
+        )
+
+    ref_sig = np.load(ref_sig_path)
+    ref_crop = cv2.imread(ref_crop_path, cv2.IMREAD_UNCHANGED)
+
+    if ref_crop is None:
+        raise RuntimeError(f"[tread] Cannot read reference crop: {ref_crop_path}")
+
+    cur_sig, cur_meta = build_tread_x_profile_signature(crop_bgr)
+
+    shift_x, score = find_tread_best_shift_x(
+        ref_sig=ref_sig,
+        cur_sig=cur_sig,
+        max_shift_px=TREAD_PROFILE_MAX_SHIFT_PX,
+    )
+
+    aligned_bgr = shift_image_x_same_size_profile(
+        crop_bgr,
+        shift_x=shift_x,
+        border_value=TREAD_PROFILE_BORDER_VALUE,
+    )
+
+    warnings = []
+
+    if score < TREAD_PROFILE_MIN_NCC_SCORE:
+        warnings.append(
+            f"LOW_NCC_SCORE {score:.3f} < {TREAD_PROFILE_MIN_NCC_SCORE:.3f}"
+        )
+
+    if debug_save_path:
+        try:
+            save_tread_profile_debug(
+                ref_img=ref_crop,
+                cur_img=crop_bgr,
+                aligned_img=aligned_bgr,
+                shift_x=shift_x,
+                score=score,
+                debug_save_path=debug_save_path,
+            )
+        except Exception as e:
+            print(f"[TREAD PROFILE XALIGN][WARN] debug save failed: {e}")
 
     meta = {
         "status": "ok",
-        "mode": "reference_band_only",
-        "fixed_crop_y1": int(y1),
-        "fixed_crop_y2": int(y2),
-        "ref_h": int(ref_info.get("ref_h", image_bgr.shape[0])),
-        "ref_w": int(ref_info.get("ref_w", image_bgr.shape[1])),
-        "final_h": int(crop_bgr.shape[0]),
-        "final_w": int(crop_bgr.shape[1]),
-    }
-    return crop_bgr, image_bgr.copy(), meta
-
-
-def get_reference_r_band(reference_bgr, det_model, slice_h, slice_w):
-    """
-    Detect R on reference image ONCE and return fixed crop band info.
-    """
-    if reference_bgr is None:
-        return {"status": "fail", "reason": "reference_none"}
-
-    reference_bgr = _ensure_bgr(reference_bgr)
-
-    ref_r = detect_two_r_from_image(reference_bgr, det_model, slice_h, slice_w)
-    if len(ref_r) < 2:
-        return {
-            "status": "fail",
-            "reason": "reference_less_than_2_r",
-            "ref_r": ref_r,
-        }
-
-    ref_r = sorted(ref_r, key=lambda v: v[5])
-
-    y1 = int(round(ref_r[0][1]))
-    y2 = int(round(ref_r[1][1]))
-
-    H, W = reference_bgr.shape[:2]
-    y1 = max(0, min(y1, H - 1))
-    y2 = max(0, min(y2, H - 1))
-
-    if y2 <= y1:
-        return {
-            "status": "fail",
-            "reason": "invalid_reference_crop_band",
-            "ref_r": ref_r,
-            "y1": y1,
-            "y2": y2,
-            "ref_h": H,
-            "ref_w": W,
-        }
-
-    return {
-        "status": "ok",
-        "ref_r": ref_r,
-        "y1": y1,
-        "y2": y2,
-        "ref_h": H,
-        "ref_w": W,
+        "mode": "tread_profile_x_alignment",
+        "side": "tread",
+        "final_shift_x": int(shift_x),
+        "ncc_score": float(score),
+        "warnings": warnings,
+        "ref_signature_path": ref_sig_path,
+        "ref_crop_path": ref_crop_path,
+        "current_signature_meta": cur_meta,
     }
 
-
-# =========================================================
-# OPTIONAL ALIGNMENT TO REFERENCE + FIXED BAND
-# =========================================================
-def align_and_crop_to_reference_fixed_band(
-    image_bgr,
-    reference_bgr,
-    det_model,
-    slice_h,
-    slice_w,
-    target_size=None,
-    ref_info=None,
-):
-    """
-    1) detect R on source image
-    2) use precomputed/detected ref_info
-    3) align source to reference using reference R centers
-    4) crop aligned image using fixed reference y1,y2
-    """
-    if image_bgr is None:
-        return None, None, {"status": "fail", "reason": "image_none"}
-    if reference_bgr is None:
-        return None, None, {"status": "fail", "reason": "reference_none"}
-
-    image_bgr = _ensure_bgr(image_bgr)
-    reference_bgr = _ensure_bgr(reference_bgr)
-
-    raw_r = detect_two_r_from_image(image_bgr, det_model, slice_h, slice_w)
-    if len(raw_r) < 2:
-        return None, None, {
-            "status": "fail",
-            "reason": "source_less_than_2_r",
-            "raw_r": raw_r,
-        }
-
-    if ref_info is None:
-        ref_info = get_reference_r_band(reference_bgr, det_model, slice_h, slice_w)
-    if ref_info["status"] != "ok":
-        return None, None, ref_info
-
-    ref_r = ref_info["ref_r"]
-    fixed_y1 = ref_info["y1"]
-    fixed_y2 = ref_info["y2"]
-
-    ref_pts = np.array([
-        [ref_r[0][4], ref_r[0][5]],
-        [ref_r[1][4], ref_r[1][5]],
-    ], dtype=np.float32)
-
-    src_pts = np.array([
-        [raw_r[0][4], raw_r[0][5]],
-        [raw_r[1][4], raw_r[1][5]],
-    ], dtype=np.float32)
-
-    M, _ = cv2.estimateAffinePartial2D(src_pts, ref_pts)
-    if M is None:
-        return None, None, {
-            "status": "fail",
-            "reason": "affine_estimation_failed",
-            "raw_r": raw_r,
-            "ref_r": ref_r,
-        }
-
-    ref_h, ref_w = reference_bgr.shape[:2]
-    aligned_bgr = cv2.warpAffine(
-        image_bgr,
-        M,
-        (ref_w, ref_h),
-        flags=cv2.INTER_LINEAR,
-        borderValue=(0, 0, 0),
+    print(
+        f"[TREAD PROFILE XALIGN] shift_x={shift_x} | "
+        f"score={score:.4f} | warnings={warnings}"
     )
 
-    crop_bgr = crop_between_fixed_y(
-        aligned_bgr,
-        fixed_y1,
-        fixed_y2,
+    return aligned_bgr, meta
+
+
+def apply_x_alignment_with_reference(
+    crop_bgr,
+    side_name,
+    artifacts_dir,
+    create_reference_if_missing=True,
+    debug_save_path=None,
+):
+    """
+    Creates/loads X-edge reference for tread/inner/bead.
+
+    During calibration:
+        first crop creates reference edges.
+
+    During inference:
+        saved reference edges are loaded and current image is shifted in X.
+    """
+
+    side_name = side_name.lower().strip()
+
+    # --------------------------------------------------------
+    # Tread uses profile-based X alignment.
+    # This avoids unreliable left/right edge bbox detection.
+    # --------------------------------------------------------
+    if side_name == "tread":
+        return apply_tread_profile_x_alignment(
+            crop_bgr=crop_bgr,
+            artifacts_dir=artifacts_dir,
+            create_reference_if_missing=create_reference_if_missing,
+            debug_save_path=debug_save_path,
+        )
+    
+    os.makedirs(artifacts_dir, exist_ok=True)
+
+    configure_xalign_for_side(side_name)
+
+    ref_edges_path = os.path.join(artifacts_dir, f"{side_name}_x_ref_edges.json")
+
+    if create_reference_if_missing and not os.path.exists(ref_edges_path):
+        ref_edges = xalign.detect_tire_edges(
+            crop_bgr,
+            side_name=f"{side_name}_x_reference",
+        )
+
+        # --------------------------------------------------------
+        # Save reference edge JSON
+        # This is used during production/inference alignment.
+        # --------------------------------------------------------
+        with open(ref_edges_path, "w", encoding="utf-8") as f:
+            json.dump(ref_edges, f, indent=4)
+
+        # --------------------------------------------------------
+        # Save reference cropped image
+        # This is for visual validation/debug.
+        # --------------------------------------------------------
+        ref_crop_path = os.path.join(
+            artifacts_dir,
+            f"{side_name}_x_reference_crop.png"
+        )
+        cv2.imwrite(ref_crop_path, crop_bgr)
+
+        # --------------------------------------------------------
+        # Save reference bbox overlay
+        # This lets you confirm whether the detected edge is correct.
+        # --------------------------------------------------------
+        ref_bbox_path = os.path.join(
+            artifacts_dir,
+            f"{side_name}_x_reference_bbox.png"
+        )
+
+        try:
+            ref_overlay = xalign.draw_bbox_overlay(
+                crop_bgr,
+                edges=ref_edges,
+                ref_edges=None,
+                shift_x=0,
+                title=f"{side_name.upper()} X REFERENCE",
+            )
+            cv2.imwrite(ref_bbox_path, ref_overlay)
+        except Exception as e:
+            print(f"[{side_name.upper()} XALIGN][WARN] reference bbox save failed: {e}")
+            ref_bbox_path = None
+
+        x_meta = {
+            "status": "ok",
+            "mode": "created_x_reference",
+            "side": side_name,
+            "ref_edges_path": ref_edges_path,
+            "ref_crop_path": ref_crop_path,
+            "ref_bbox_path": ref_bbox_path,
+            "ref_edges": ref_edges,
+            "final_shift_x": 0,
+        }
+
+        print(f"[{side_name.upper()} XALIGN] Created reference edges: {ref_edges_path}")
+        print(f"[{side_name.upper()} XALIGN] Saved reference crop : {ref_crop_path}")
+        print(f"[{side_name.upper()} XALIGN] Saved reference bbox : {ref_bbox_path}")
+
+        return crop_bgr, x_meta
+
+    if not os.path.exists(ref_edges_path):
+        raise RuntimeError(
+            f"[{side_name}] X reference edges not found: {ref_edges_path}. "
+            f"Run calibration first."
+        )
+
+    with open(ref_edges_path, "r", encoding="utf-8") as f:
+        ref_edges = json.load(f)
+
+    aligned_bgr, x_info = xalign.align_to_reference_edges(
+        img=crop_bgr,
+        ref_edges=ref_edges,
+        side_name=side_name,
+    )
+
+    x_info["ref_edges_path"] = ref_edges_path
+
+    if debug_save_path:
+        try:
+            os.makedirs(os.path.dirname(debug_save_path), exist_ok=True)
+            overlay = xalign.draw_bbox_overlay(
+                crop_bgr,
+                edges=x_info["current_detector_info"],
+                ref_edges=ref_edges,
+                shift_x=x_info["final_shift_x"],
+                title=f"{side_name.upper()} BEFORE XALIGN",
+            )
+            cv2.imwrite(debug_save_path, overlay)
+        except Exception as e:
+            print(f"[{side_name.upper()} XALIGN][WARN] debug save failed: {e}")
+
+    print(
+        f"[{side_name.upper()} XALIGN] "
+        f"shift_x={x_info['final_shift_x']} | "
+        f"before_LR=({x_info['before_left_x']},{x_info['before_right_x']}) | "
+        f"ref_LR=({x_info['ref_left_x']},{x_info['ref_right_x']})"
+    )
+
+    return aligned_bgr, x_info
+
+
+# ============================================================
+# MAIN HELPER USED BY TREAD / INNER / BEAD PIPELINES
+# ============================================================
+
+def crop_resize_xalign_non_r_side(
+    pre_bgr,
+    side_name,
+    sidewall_r_anchor,
+    offset_ratio,
+    target_size,
+    artifacts_dir,
+    create_x_reference_if_missing=True,
+    debug_save_path=None,
+):
+    crop_bgr, crop_meta = crop_resize_by_sidewall_anchor(
+        pre_bgr=pre_bgr,
+        side_name=side_name,
+        sidewall_r_anchor=sidewall_r_anchor,
+        offset_ratio=offset_ratio,
         target_size=target_size,
     )
 
-    if crop_bgr is None:
-        return None, aligned_bgr, {
-            "status": "fail",
-            "reason": "crop_failed_fixed_reference_band",
-            "fixed_y1": fixed_y1,
-            "fixed_y2": fixed_y2,
-        }
-
-    aligned_r = []
-    for x, y, w, h, cx, cy in raw_r:
-        nx, ny = transform_point(M, x, y)
-        ncx, ncy = transform_point(M, cx, cy)
-        aligned_r.append((nx, ny, ncx, ncy))
+    aligned_bgr, x_meta = apply_x_alignment_with_reference(
+        crop_bgr=crop_bgr,
+        side_name=side_name,
+        artifacts_dir=artifacts_dir,
+        create_reference_if_missing=create_x_reference_if_missing,
+        debug_save_path=debug_save_path,
+    )
 
     meta = {
         "status": "ok",
-        "raw_r": raw_r,
-        "ref_r": ref_r,
-        "aligned_r": aligned_r,
-        "fixed_crop_y1": fixed_y1,
-        "fixed_crop_y2": fixed_y2,
-        "ref_h": ref_h,
-        "ref_w": ref_w,
-        "final_h": int(crop_bgr.shape[0]),
-        "final_w": int(crop_bgr.shape[1]),
+        "side": side_name,
+        "crop_meta": crop_meta,
+        "x_align_meta": x_meta,
     }
-    return crop_bgr, aligned_bgr, meta
+
+    return aligned_bgr, meta
