@@ -6,7 +6,6 @@ from datetime import datetime
 from threading import Lock, Event
 import pandas as pd # type: ignore
 from PIL import Image, ImageTk # type: ignore
-import cv2 # type: ignore
 import torch # type: ignore
 import warnings
 warnings.filterwarnings("ignore")
@@ -29,7 +28,6 @@ from src.Pages.new_sku_page import NewSKUPage
 from src.Pages.repeatability_page import RepeatabilityPage
 from src.Pages.action_code_plan_page import ActionCodePlanPage
 from src.Pages.dashboard import ApolloDashboardCardsWidget
-from PyQt5.QtCore import Qt  # type: ignore
 from src.Pages.annotation_tool import AnnotationTool  
 from pathlib import Path
 from snap7 import Client # type: ignore
@@ -466,12 +464,14 @@ class LatestCycleImagesWorker(QObject):
         panel_size=(260, 700),
         fallback_paths=None,
         sku_name=None,
+        cycle_dir_override=None,
     ):
         super().__init__()
         self.media_root = media_root
         self.panel_w, self.panel_h = panel_size
         self.fallback_paths = fallback_paths or {}
         self.sku_name = sku_name
+        self.cycle_dir_override = cycle_dir_override
         self._stop_event = Event()
     
     @pyqtSlot()
@@ -500,43 +500,94 @@ class LatestCycleImagesWorker(QObject):
         for side_key, folder_name in side_folders.items():
             img_path = None
             qimage = None
+
             if cycle_dir:
-                img_path = self._find_latest_final_image(cycle_dir, folder_name)
+                img_path = self._find_side_final_image(cycle_dir, folder_name)
+
+                if not img_path:
+                    img_path = self._find_latest_final_image(cycle_dir, folder_name)
+
             if not img_path:
                 img_path = self.fallback_paths.get(side_key)
+
             if img_path and os.path.exists(img_path):
                 qimage = self._load_scaled_qimage(img_path)
-            payload["images"][side_key] = {"path": img_path, "qimage": qimage}
+
+            payload["images"][side_key] = {
+                "path": img_path,
+                "qimage": qimage,
+            }
         
         return payload
     
+    def _find_side_final_image(self, cycle_dir, side_name):
+        """
+        Finds final output image for one side.
+        Main expected path:
+            Cycle_N/<side>/final/final_stitched.png
+        """
+
+        candidates = [
+            os.path.join(cycle_dir, side_name, "final", "final_stitched.png"),
+            os.path.join(cycle_dir, side_name, "final", "template_stitched.png"),
+            os.path.join(cycle_dir, side_name, "final", "defect_overlay.png"),
+            os.path.join(cycle_dir, side_name, "final", "final.png"),
+            os.path.join(cycle_dir, side_name, "final_stitched.png"),
+            os.path.join(cycle_dir, side_name, "template_stitched.png"),
+        ]
+
+        for path in candidates:
+            if os.path.isfile(path):
+                print(f"[GUI][IMAGES] {side_name} image: {path}")
+                return path
+
+        print(f"[GUI][IMAGES][WARN] no final image found for {side_name} in {cycle_dir}")
+        return None
+    
     def _get_latest_cycle_dir(self):
         """
-        Reads latest output from:
+        Load latest output cycle folder from:
+
             media/Output/<SKU>/<date>/Cycle_N
 
-        If sku_name is not available, fallback searches all SKUs.
+        Priority:
+            1. cycle_dir_override if provided
+            2. selected SKU latest date/latest Cycle_N
+            3. if SKU not selected, search all SKUs and use latest modified Cycle_N
+
+        This directly picks latest Cycle_N folder.
         """
+
+        if self.cycle_dir_override and os.path.isdir(self.cycle_dir_override):
+            print(f"[GUI][IMAGES] using override cycle: {self.cycle_dir_override}")
+            return self.cycle_dir_override
+
         output_base = os.path.join(self.media_root, "Output")
 
         if not os.path.isdir(output_base):
+            print(f"[GUI][IMAGES] Output folder not found: {output_base}")
             return None
 
-        search_roots = []
+        search_sku_roots = []
 
-        if self.sku_name:
+        # Prefer selected SKU
+        if self.sku_name and str(self.sku_name).strip() not in ["", "--", "None"]:
             sku_root = os.path.join(output_base, self.sku_name)
+
             if os.path.isdir(sku_root):
-                search_roots.append(sku_root)
-        else:
-            for sku in os.listdir(output_base):
-                sku_root = os.path.join(output_base, sku)
+                search_sku_roots.append(sku_root)
+
+        # If selected SKU is not available, search all SKUs
+        if not search_sku_roots:
+            for sku_name in os.listdir(output_base):
+                sku_root = os.path.join(output_base, sku_name)
+
                 if os.path.isdir(sku_root):
-                    search_roots.append(sku_root)
+                    search_sku_roots.append(sku_root)
 
-        cycle_dirs = []
+        cycle_candidates = []
 
-        for sku_root in search_roots:
+        for sku_root in search_sku_roots:
             for date_name in os.listdir(sku_root):
                 date_root = os.path.join(sku_root, date_name)
 
@@ -544,19 +595,44 @@ class LatestCycleImagesWorker(QObject):
                     continue
 
                 for cycle_name in os.listdir(date_root):
-                    cycle_path = os.path.join(date_root, cycle_name)
+                    cycle_dir = os.path.join(date_root, cycle_name)
 
-                    if (
-                        os.path.isdir(cycle_path)
-                        and cycle_name.startswith("Cycle_")
-                    ):
-                        cycle_dirs.append(cycle_path)
+                    if not os.path.isdir(cycle_dir):
+                        continue
 
-        if not cycle_dirs:
+                    if not cycle_name.startswith("Cycle_"):
+                        continue
+
+                    # Prefer numeric Cycle_N order
+                    try:
+                        cycle_num = int(cycle_name.replace("Cycle_", "").strip())
+                    except Exception:
+                        cycle_num = -1
+
+                    cycle_candidates.append(
+                        {
+                            "cycle_dir": cycle_dir,
+                            "cycle_num": cycle_num,
+                            "mtime": os.path.getmtime(cycle_dir),
+                        }
+                    )
+
+        if not cycle_candidates:
+            print("[GUI][IMAGES] No Cycle_N folders found inside Output")
             return None
 
-        cycle_dirs.sort(key=os.path.getmtime, reverse=True)
-        return cycle_dirs[0]
+        # Latest folder by modified time first.
+        # If same day/folder style, Cycle_N also helps.
+        cycle_candidates.sort(
+            key=lambda x: (x["mtime"], x["cycle_num"]),
+            reverse=True,
+        )
+
+        latest_cycle_dir = cycle_candidates[0]["cycle_dir"]
+
+        print(f"[GUI][IMAGES] latest output cycle folder: {latest_cycle_dir}")
+
+        return latest_cycle_dir
     
     def _find_latest_final_image(self, cycle_dir, side_folder):
         side_final_root = os.path.join(cycle_dir, side_folder, "final")
@@ -814,7 +890,7 @@ class MainWindow(QMainWindow):
         
         # Initial delayed refresh
         QTimer.singleShot(1200, self.refresh_cycle_images_async)
-        
+        QTimer.singleShot(3000, self.refresh_cycle_images_async)
         # Start timers
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_datetime)
@@ -1042,13 +1118,15 @@ class MainWindow(QMainWindow):
     # THROTTLED IMAGE REFRESH
     # ========================================================================
     
-    def refresh_cycle_images_async(self):
+    def refresh_cycle_images_async(self, cycle_dir_override=None):
         """Throttled async image refresh"""
         current_time = time.time()
-        
-        # Throttle check
-        if current_time - self._last_refresh_time < self.REFRESH_MIN_INTERVAL:
-            return
+
+        # Throttle only normal refresh.
+        # Do not throttle forced refresh after completed AI cycle.
+        if cycle_dir_override is None:
+            if current_time - self._last_refresh_time < self.REFRESH_MIN_INTERVAL:
+                return
         
         # Lock to prevent concurrent refreshes
         if not self._refresh_lock.acquire(blocking=False):
@@ -1070,6 +1148,7 @@ class MainWindow(QMainWindow):
                 panel_size=(panel_w, panel_h),
                 fallback_paths=self.startup_image_paths,
                 sku_name=self.selected_live_sku,
+                cycle_dir_override=cycle_dir_override,
             )
             
             def on_finished(payload):
@@ -1490,10 +1569,26 @@ class MainWindow(QMainWindow):
 
 
     def stop_continuous_inspection(self):
-        """Stop continuous inspection"""
-        if self.continuous_worker:
-            self.continuous_worker.stop()
-            self.is_continuous_running = False
+        """Stop continuous inspection gracefully"""
+        try:
+            if self.continuous_worker:
+                self.continuous_worker.stop()
+
+            # Extra safety: directly stop camera manager also
+            if self.multi_cam is not None:
+                if hasattr(self.multi_cam, "_stop_event"):
+                    self.multi_cam._stop_event.set()
+
+                if hasattr(self.multi_cam, "stop_all_streams"):
+                    threading.Thread(
+                        target=self.multi_cam.stop_all_streams,
+                        daemon=True,
+                    ).start()
+
+        except Exception as e:
+            logger.warning(f"[EXIT] continuous inspection stop warning: {e}")
+
+        self.is_continuous_running = False
 
         set_live_progress(
             phase="WAITING",
@@ -1536,7 +1631,38 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"✅ {cycle_id} | Result: {final_label}")
         self.update_label_async()
-        QTimer.singleShot(700, self.refresh_cycle_images_async)
+
+        cycle_output_dir = (
+            result.get("cycle_dir")
+            or result.get("output_dir")
+        )
+
+        # Force GUI image panels to reload the exact completed cycle output.
+        self.latest_loaded_cycle_dir = None
+        self.current_panel_image_paths = {}
+        self._last_refresh_time = 0
+
+        cycle_output_dir = result.get("cycle_dir") or result.get("output_dir")
+
+        self.latest_loaded_cycle_dir = None
+        self.current_panel_image_paths = {}
+        self._last_refresh_time = 0
+
+        if cycle_output_dir and os.path.isdir(cycle_output_dir):
+            QTimer.singleShot(
+                300,
+                lambda d=cycle_output_dir: self.refresh_cycle_images_async(
+                    cycle_dir_override=d
+                ),
+            )
+            QTimer.singleShot(
+                1200,
+                lambda d=cycle_output_dir: self.refresh_cycle_images_async(
+                    cycle_dir_override=d
+                ),
+            )
+        else:
+            QTimer.singleShot(700, self.refresh_cycle_images_async)
     
     def start_runtime_preload(self, sku_name=None):
         sku_name = (sku_name or "").strip()

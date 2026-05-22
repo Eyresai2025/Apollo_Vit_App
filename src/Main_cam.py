@@ -108,6 +108,8 @@ class ContinuousCycleWorker(QObject):
         self._ready_confirm_event = threading.Event()
         self._stop_event = threading.Event()
         self._is_running = False
+        self._cleanup_lock = threading.Lock()
+        self._cleanup_done = False
         self._runtimes_preloaded = False
         self._runtimes = None
         self.is_hardware = (TRIGGER_MODE == "hardware")
@@ -267,6 +269,9 @@ class ContinuousCycleWorker(QObject):
         return self._runtimes
    
     def _execute_capture(self, capture_count: int, timestamp: str) -> bool:
+        if self._stop_event.is_set():
+            self.status_update.emit(" Capture cancelled because stop was requested.")
+            return False
         """Execute a complete capture + process cycle"""
         try:
             set_live_progress(
@@ -283,6 +288,9 @@ class ContinuousCycleWorker(QObject):
                 images = self.multi_camera_manager.capture_all(
                     sides_to_capture=self.capture_sides,
                 )
+                if self._stop_event.is_set():
+                    self.status_update.emit(" Capture stopped during camera acquisition.")
+                    return False
                 missing_capture_sides = [
                     side for side in self.capture_sides
                     if side not in images or images.get(side) is None
@@ -295,6 +303,10 @@ class ContinuousCycleWorker(QObject):
                     )
             except TypeError:
                 images = self.multi_camera_manager.capture_all()
+
+                if self._stop_event.is_set():
+                    self.status_update.emit(" Capture stopped during camera acquisition.")
+                    return False
            
             if not images or not any(img is not None for img in images.values()):
                 self.status_update.emit(" Capture failed - no images received")
@@ -350,7 +362,9 @@ class ContinuousCycleWorker(QObject):
                 total_images=len(self.sides_to_run),
                 message=f"AI inference started for {cycle_id}",
             )
- 
+            if self._stop_event.is_set():
+                self.status_update.emit(" AI pipeline skipped because stop was requested.")
+                return False
             result = self._run_ai_pipeline(image_map, cycle_id, cycle_capture_dir)
            
             if result:
@@ -543,23 +557,63 @@ class ContinuousCycleWorker(QObject):
    
     def _cleanup(self):
         """Clean shutdown"""
+        with self._cleanup_lock:
+            if self._cleanup_done:
+                return
+            self._cleanup_done = True
+
+        self.status_update.emit(" Cleaning up live inspection resources...")
+
         try:
-            if hasattr(self.multi_camera_manager, 'stop_all_streams'):
-                self.multi_camera_manager.stop_all_streams()
-        except Exception:
-            pass
-       
+            if self.multi_camera_manager is not None:
+                # This is important: it unblocks PLC wait / camera wait.
+                if hasattr(self.multi_camera_manager, "_stop_event"):
+                    self.multi_camera_manager._stop_event.set()
+
+                if hasattr(self.multi_camera_manager, "stop_all_streams"):
+                    self.multi_camera_manager.stop_all_streams()
+
+        except Exception as e:
+            self.status_update.emit(f" Camera cleanup warning: {e}")
+
         try:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:
             pass
+
+        self.status_update.emit(" Live inspection cleanup completed")
    
     def stop(self):
-        """Signal the worker to stop"""
+        """Signal the worker to stop and unblock camera/PLC waits."""
         self.status_update.emit(" Stop signal received...")
+
+        # Stop main worker loop
         self._stop_event.set()
+
+        # If worker is waiting for user OK popup confirmation, release that wait also
+        try:
+            self._ready_confirm_event.set()
+        except Exception:
+            pass
+
+        # Immediately tell camera manager to stop waiting/capturing
+        try:
+            if self.multi_camera_manager is not None:
+                if hasattr(self.multi_camera_manager, "_stop_event"):
+                    self.multi_camera_manager._stop_event.set()
+        except Exception:
+            pass
+
+        # Run cleanup in background so GUI does not freeze while closing
+        try:
+            threading.Thread(
+                target=self._cleanup,
+                daemon=True,
+            ).start()
+        except Exception:
+            self._cleanup()
    
     def is_running(self) -> bool:
         """Check if worker is running"""

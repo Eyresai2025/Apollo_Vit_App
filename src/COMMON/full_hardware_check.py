@@ -293,10 +293,62 @@ class FullHardwareChecker:
             detail["message"] = "DEPLOYMENT=False. Application OK bit demo pass."
             return True, detail
 
-        # Production mode: only send if all checks passed
+        # Production mode: if hardware checks failed, force App OK bit FALSE
         if not checks_ok:
-            detail["message"] = "Application OK bit not sent because hardware checks failed."
-            return False, detail
+            if client is None:
+                detail["message"] = (
+                    "Hardware checks failed. Application OK bit could not be cleared "
+                    "because PLC client is None."
+                )
+                return False, detail
+
+            try:
+                db = self.app_ok_bit["db"]
+                byte = self.app_ok_bit["byte"]
+                bit = self.app_ok_bit["bit"]
+
+                # 1. Write App OK bit FALSE
+                self._write_db_bit(
+                    client=client,
+                    db_number=db,
+                    byte_index=byte,
+                    bit_index=bit,
+                    value=False,
+                )
+
+                # 2. Small delay for PLC update cycle
+                time.sleep(0.1)
+
+                # 3. Read same bit back
+                read_back = self._read_db_bit(
+                    client=client,
+                    db_number=db,
+                    byte_index=byte,
+                    bit_index=bit,
+                )
+
+                detail["sent"] = True
+                detail["value_written"] = False
+                detail["read_back_value"] = read_back
+                detail["verified"] = not bool(read_back)
+
+                if not read_back:
+                    detail["message"] = (
+                        f"Hardware checks failed. Application OK bit cleared and verified at {address}."
+                    )
+                    return False, detail
+
+                detail["message"] = (
+                    f"Hardware checks failed. Tried to clear Application OK bit, "
+                    f"but read-back is still TRUE at {address}."
+                )
+                return False, detail
+
+            except Exception as e:
+                detail["message"] = (
+                    f"Hardware checks failed. Failed to clear Application OK bit at {address}: {e}"
+                )
+                return False, detail
 
         if client is None:
             detail["message"] = "Application OK bit not sent because PLC client is None."

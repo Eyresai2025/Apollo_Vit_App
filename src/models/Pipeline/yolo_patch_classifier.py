@@ -31,6 +31,7 @@ def segment_patch_paths(
     conf_threshold: float = 0.5,
     max_batch_size: int = 32,
     iou_threshold: float = 0.45,
+    label_prefix: str = "",
 ):
     """
     Run segmentation on a list of image paths.
@@ -69,7 +70,13 @@ def segment_patch_paths(
 
             cls_ids = boxes.cls.int().cpu().numpy().tolist()
             conf_vals = boxes.conf.float().cpu().numpy().tolist()
-            cls_names = [model.names[int(cid)] for cid in cls_ids]
+            cls_names_raw = [model.names[int(cid)] for cid in cls_ids]
+
+            if label_prefix:
+                cls_names = [f"{label_prefix}_{name}" for name in cls_names_raw]
+            else:
+                cls_names = cls_names_raw
+                
             boxes_xyxy = boxes.xyxy.cpu().numpy().tolist()
 
             # Create overlay
@@ -83,7 +90,7 @@ def segment_patch_paths(
                 cv2.putText(overlay_bgr, label, (int(x1), max(int(y1) - 5, 10)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
 
-                # If masks are available, overlay them
+                # masks are available, overlay them
                 if hasattr(res, "masks") and res.masks is not None:
                     mask = res.masks.data[i].cpu().numpy().squeeze()
                     mask = cv2.resize(mask, (img.shape[1], img.shape[0]))
@@ -94,6 +101,7 @@ def segment_patch_paths(
 
             out[path] = {
                 "cls_ids": cls_ids,
+                "cls_names_raw": cls_names_raw,
                 "cls_names": cls_names,
                 "confs": conf_vals,
                 "overlay": overlay_bgr,
