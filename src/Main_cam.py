@@ -1,6 +1,8 @@
 import os
 import threading
 import time
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable
 import traceback
@@ -267,7 +269,17 @@ class ContinuousCycleWorker(QObject):
             return self._runtimes
         self._preload_runtimes()
         return self._runtimes
-   
+    
+    def _timing_log(self, msg: str):
+        """
+        Timing log goes to:
+        1. GUI status_update signal
+        2. app.log / console through logger
+        """
+        full_msg = f"[TIMING] {msg}"
+        self.status_update.emit(full_msg)
+        logger.info(full_msg)
+
     def _execute_capture(self, capture_count: int, timestamp: str) -> bool:
         if self._stop_event.is_set():
             self.status_update.emit(" Capture cancelled because stop was requested.")
@@ -282,12 +294,47 @@ class ContinuousCycleWorker(QObject):
                 message="Capturing images from cameras",
             )
  
-            self.status_update.emit(f" Capturing images from {len(self.multi_camera_manager.cameras)} cameras...")
-           
+            cycle_t0 = time.perf_counter()
+            cycle_start_wall = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+            self._timing_log(
+                f"CYCLE_START | capture_count={capture_count} | "
+                f"wall_time={cycle_start_wall} | "
+                f"note=timer starts before capture_all call"
+            )
+
+            self.status_update.emit(
+                f" Capturing images from {len(self.multi_camera_manager.cameras)} cameras..."
+            )
+
+            capture_t0 = time.perf_counter()
+            self._timing_log(
+                f"CAPTURE_CALL_START | capture_count={capture_count} | "
+                f"sides={','.join(self.capture_sides)}"
+            )
+
             try:
                 images = self.multi_camera_manager.capture_all(
                     sides_to_capture=self.capture_sides,
                 )
+
+                capture_sec = time.perf_counter() - capture_t0
+                self._timing_log(
+                    f"CAPTURE_CALL_DONE | capture_count={capture_count} | "
+                    f"time={capture_sec:.3f}s | "
+                    f"note=includes trigger wait if capture_all waits internally"
+                )
+
+                # Optional: if HARDWARE_TRIGGER.py exposes exact internal timings,
+                # this will print them also.
+                camera_timing = getattr(self.multi_camera_manager, "last_capture_timing", None)
+                if isinstance(camera_timing, dict):
+                    for k, v in camera_timing.items():
+                        self._timing_log(
+                            f"CAMERA_INTERNAL | capture_count={capture_count} | {k}={v}"
+                        )
+
+             
                 if self._stop_event.is_set():
                     self.status_update.emit(" Capture stopped during camera acquisition.")
                     return False
@@ -301,8 +348,23 @@ class ContinuousCycleWorker(QObject):
                         "Camera capture failed / missing images for: "
                         + ", ".join(missing_capture_sides)
                     )
+                
             except TypeError:
                 images = self.multi_camera_manager.capture_all()
+
+                capture_sec = time.perf_counter() - capture_t0
+                self._timing_log(
+                    f"CAPTURE_CALL_DONE | capture_count={capture_count} | "
+                    f"time={capture_sec:.3f}s | "
+                    f"mode=old_capture_all_signature"
+                )
+
+                camera_timing = getattr(self.multi_camera_manager, "last_capture_timing", None)
+                if isinstance(camera_timing, dict):
+                    for k, v in camera_timing.items():
+                        self._timing_log(
+                            f"CAMERA_INTERNAL | capture_count={capture_count} | {k}={v}"
+                        )
 
                 if self._stop_event.is_set():
                     self.status_update.emit(" Capture stopped during camera acquisition.")
@@ -333,7 +395,15 @@ class ContinuousCycleWorker(QObject):
             self.status_update.emit(f" Cycle directory: {cycle_id}")
            
             self.status_update.emit(" Saving images...")
+
+            save_t0 = time.perf_counter()
             image_map = self._save_images_to_cycle(images, cycle_capture_dir)
+            save_sec = time.perf_counter() - save_t0
+
+            self._timing_log(
+                f"IMAGE_SAVE_DONE | cycle_id={cycle_id} | "
+                f"time={save_sec:.3f}s | saved_sides={len(image_map)}"
+            )
            
             if not image_map:
                 self.status_update.emit(" No images saved to cycle directory")
@@ -365,9 +435,30 @@ class ContinuousCycleWorker(QObject):
             if self._stop_event.is_set():
                 self.status_update.emit(" AI pipeline skipped because stop was requested.")
                 return False
+            ai_t0 = time.perf_counter()
             result = self._run_ai_pipeline(image_map, cycle_id, cycle_capture_dir)
+            ai_sec = time.perf_counter() - ai_t0
+
+            self._timing_log(
+                f"AI_PIPELINE_DONE | cycle_id={cycle_id} | "
+                f"time={ai_sec:.3f}s"
+            )
            
             if result:
+                total_cycle_sec = time.perf_counter() - cycle_t0
+
+                result["timing_capture_call_sec"] = round(capture_sec, 3)
+                result["timing_image_save_sec"] = round(save_sec, 3)
+                result["timing_ai_pipeline_sec"] = round(ai_sec, 3)
+                result["timing_total_from_capture_call_sec"] = round(total_cycle_sec, 3)
+
+                self._timing_log(
+                    f"CYCLE_TOTAL | cycle_id={cycle_id} | "
+                    f"capture_call={capture_sec:.3f}s | "
+                    f"save={save_sec:.3f}s | "
+                    f"ai={ai_sec:.3f}s | "
+                    f"total={total_cycle_sec:.3f}s"
+                )
                 set_live_progress(
                     phase="COMPLETED",
                     active_zone="All Zones",
@@ -378,7 +469,10 @@ class ContinuousCycleWorker(QObject):
  
                 self.processing_completed.emit(result)
                 final_label = result.get('final_label', 'Unknown')
-                cycle_time = result.get('cycle_latency_sec', 0)
+                cycle_time = result.get(
+                    'timing_total_from_capture_call_sec',
+                    result.get('cycle_latency_sec', 0)
+                )
                
                 self.status_update.emit("")
                 self.status_update.emit(f" ═══ CYCLE #{capture_count} COMPLETE ═══")
@@ -501,7 +595,14 @@ class ContinuousCycleWorker(QObject):
                 self.processing_error.emit(error_msg)
                 return None
            
+            runtime_t0 = time.perf_counter()
             runtimes = self._get_or_load_runtimes()
+            runtime_sec = time.perf_counter() - runtime_t0
+
+            self._timing_log(
+                f"AI_RUNTIME_READY | cycle_id={cycle_id} | "
+                f"time={runtime_sec:.3f}s | preloaded={self._runtimes_preloaded}"
+            )
             if runtimes is None:
                 self.processing_error.emit("Failed to load AI runtimes")
                 return None
@@ -522,7 +623,7 @@ class ContinuousCycleWorker(QObject):
             os.makedirs(output_root, exist_ok=True)
            
             self.status_update.emit("🚀 Running AI inference on all sides...")
-           
+            run_cycle_t0 = time.perf_counter()
             result = run_cycle(
                 image_map=image_map,
                 runtimes=runtimes,
@@ -535,7 +636,20 @@ class ContinuousCycleWorker(QObject):
                 sku_name=self.sku_name,
                 tyre_name=self.tyre_name,
             )
-           
+            if not isinstance(result, dict):
+                self.processing_error.emit("run_cycle returned invalid result")
+                return None
+            run_cycle_sec = time.perf_counter() - run_cycle_t0
+
+            self._timing_log(
+                f"RUN_CYCLE_DONE | cycle_id={cycle_id} | "
+                f"time={run_cycle_sec:.3f}s | sides={','.join(self.sides_to_run)}"
+            )
+
+            if isinstance(result, dict):
+                result.setdefault("timing", {})
+                result["timing"]["runtime_ready_sec"] = round(runtime_sec, 3)
+                result["timing"]["run_cycle_sec"] = round(run_cycle_sec, 3)
             try:
                 save_cycle_metadata(result)
             except Exception:

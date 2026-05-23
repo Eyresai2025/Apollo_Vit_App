@@ -276,6 +276,7 @@ class ThreadManager:
     def __init__(self, parent=None):
         self.parent = parent
         self.active_threads = {}
+        self.active_workers = {}  # keep worker references alive until thread finishes
         self._lock = Lock()
     
     def start_thread(self, name, worker, on_finished=None, on_error=None):
@@ -312,10 +313,12 @@ class ThreadManager:
             def cleanup():
                 with self._lock:
                     self.active_threads.pop(name, None)
+                    self.active_workers.pop(name, None)
             thread.finished.connect(cleanup)
             thread.finished.connect(thread.deleteLater)
             
             self.active_threads[name] = thread
+            self.active_workers[name] = worker  # IMPORTANT: keep worker alive
             thread.start()
             return True
     
@@ -329,6 +332,7 @@ class ThreadManager:
                         thread.terminate()
                         thread.wait()
             self.active_threads.clear()
+            self.active_workers.clear()
 
 # ============================================================================
 # IMAGE CACHE - Prevents Repeated Image Loading
@@ -479,8 +483,10 @@ class LatestCycleImagesWorker(QObject):
         try:
             if self._stop_event.is_set():
                 return
+
             payload = self._collect_latest_cycle_images()
             self.finished.emit(payload)
+
         except Exception as e:
             self.error.emit(str(e))
     
@@ -538,10 +544,7 @@ class LatestCycleImagesWorker(QObject):
 
         for path in candidates:
             if os.path.isfile(path):
-                print(f"[GUI][IMAGES] {side_name} image: {path}")
                 return path
-
-        print(f"[GUI][IMAGES][WARN] no final image found for {side_name} in {cycle_dir}")
         return None
     
     def _get_latest_cycle_dir(self):
@@ -559,13 +562,11 @@ class LatestCycleImagesWorker(QObject):
         """
 
         if self.cycle_dir_override and os.path.isdir(self.cycle_dir_override):
-            print(f"[GUI][IMAGES] using override cycle: {self.cycle_dir_override}")
             return self.cycle_dir_override
 
         output_base = os.path.join(self.media_root, "Output")
 
         if not os.path.isdir(output_base):
-            print(f"[GUI][IMAGES] Output folder not found: {output_base}")
             return None
 
         search_sku_roots = []
@@ -618,7 +619,6 @@ class LatestCycleImagesWorker(QObject):
                     )
 
         if not cycle_candidates:
-            print("[GUI][IMAGES] No Cycle_N folders found inside Output")
             return None
 
         # Latest folder by modified time first.
@@ -629,8 +629,6 @@ class LatestCycleImagesWorker(QObject):
         )
 
         latest_cycle_dir = cycle_candidates[0]["cycle_dir"]
-
-        print(f"[GUI][IMAGES] latest output cycle folder: {latest_cycle_dir}")
 
         return latest_cycle_dir
     
