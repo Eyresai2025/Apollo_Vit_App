@@ -20,3 +20,10 @@ media/img/login_ai1.gif
 *.pth
 *.onnx
 *.engine
+test-requirements.txt
+plc_handshake_manual.py
+pytest.ini
+test_apollo_vit.py
+test_main_cam_mock.py
+.coverage
+test_gui_live_mock.py

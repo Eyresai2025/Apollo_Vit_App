@@ -1,69 +1,133 @@
 import math
 import os
 import sys
+import re
+import logging
 from datetime import datetime
+from typing import Dict, Any, Optional, Tuple
 
 import cv2  # type: ignore
 
+from src.COMMON.exceptions import ValidationError
+from src.COMMON.config import TireConstants
 
-def tyre_basics(cycle_no, tyrename):
-    tyrename = str(tyrename).upper()
-    st = tyrename.find("R") + 3
-    detail = tyrename[:st]
-
-    section_width = tyrename[0:3]
-    id_inch = detail[-2:]
-
-    if len(detail) != 8:
-        aspect_ratio = 80
-    else:
-        aspect_ratio = detail[3:5]
-
-    inner_dia = int(id_inch) * 25.4
-    section_height = int(section_width) * int(aspect_ratio) / 100
-    outer_dia = int(inner_dia) + int(section_height) * 2
-
-    roller_dia = 100
-    roller_dist = 350
-
-    date_t = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    date = datetime.now().strftime("%d-%m-%Y")
-
-    tyre_dict = {
-        "tirename": tyrename,
-        "cycle_no": cycle_no,
-        "defect": False,
-        "numberOfDefects": 0,
-        "sectionHeight": int(section_height),
-        "sectionWidth": int(section_width),
-        "aspectRatio": int(aspect_ratio),
-        "radius": int(id_inch),
-        "od": int(outer_dia),
-        "rollerDiameter": roller_dia,
-        "rollerDistance": roller_dist,
-        "inspectionDateTime": date_t,
-        "inspectionDate": date,
-    }
-    return tyre_dict
+logger = logging.getLogger(__name__)
 
 
-def sidewall_dimensions(tyrename):
-    str1 = str(tyrename).upper()
-    st = str1.find("R") + 3
-    detail = str1[:st]
+def _parse_tyre_name(tyrename: str) -> Tuple[int, int, int, str]:
+    """
+    Parse and normalize tyre name.
 
-    section_width = str1[0:3]
-    id_inch = detail[-2:]
+    Supported formats:
+    - 195/65R15
+    - 195_65_R15
+    - 195-65-R15
+    - 195/65r15
 
-    if len(detail) != 8:
-        aspect_ratio = 80
-    else:
-        aspect_ratio = detail[3:5]
+    Returns:
+        section_width, aspect_ratio, rim_inch, normalized_name
+    """
+    if not tyrename:
+        raise ValidationError("Tire name cannot be empty", code="EMPTY_TYRE_NAME")
 
-    inner_dia = int(id_inch) * 25.4
-    section_height = int(section_width) * int(aspect_ratio) / 100
+    raw = str(tyrename).strip().upper()
 
-    sidewall_dia = int(inner_dia) + int(section_height)
+    match = re.fullmatch(r"(\d{3})[/_-](\d{2})[/_-]?R(\d{2,3})", raw)
+    if not match:
+        raise ValidationError(
+            f"Invalid tire name format: {tyrename}",
+            code="INVALID_TYRE_FORMAT",
+            details={
+                "expected_format": "NNN/NNRNN",
+                "received": raw,
+            },
+        )
+
+    section_width = int(match.group(1))
+    aspect_ratio = int(match.group(2))
+    rim_inch = int(match.group(3))
+
+    normalized = f"{section_width}/{aspect_ratio:02d}R{rim_inch}"
+
+    return section_width, aspect_ratio, rim_inch, normalized
+
+
+def validate_tyre_name(tyrename: str) -> str:
+    """
+    Validate and normalize tyre name to format NNN/NNRNN.
+
+    Example:
+        195_65_R15 -> 195/65R15
+        195-65-R15 -> 195/65R15
+        195/65r15  -> 195/65R15
+    """
+    _, _, _, normalized = _parse_tyre_name(tyrename)
+    return normalized
+
+
+def tyre_basics(cycle_no: int, tyrename: str) -> Dict[str, Any]:
+    """
+    Calculate tire basic parameters from tire name and cycle number.
+    """
+    if not isinstance(cycle_no, int) or cycle_no < 0:
+        raise ValidationError(
+            "Cycle number must be non-negative integer",
+            code="INVALID_CYCLE_NO",
+        )
+
+    try:
+        section_width, aspect_ratio, id_inch, tyrename = _parse_tyre_name(tyrename)
+
+        inner_dia = id_inch * TireConstants.MM_PER_INCH
+        section_height = section_width * aspect_ratio / 100
+        outer_dia = inner_dia + section_height * 2
+
+        now = datetime.now()
+        date_t = now.strftime("%Y-%m-%d_%H-%M-%S")
+        date = now.strftime("%d-%m-%Y")
+
+        tyre_dict = {
+            "tirename": tyrename,
+            "cycle_no": cycle_no,
+            "defect": False,
+            "numberOfDefects": 0,
+            "sectionHeight": int(section_height),
+            "sectionWidth": section_width,
+            "aspectRatio": aspect_ratio,
+            "radius": id_inch,
+            "od": int(outer_dia),
+            "rollerDiameter": TireConstants.ROLLER_DIAMETER_MM,
+            "rollerDistance": TireConstants.ROLLER_DISTANCE_MM,
+            "inspectionDateTime": date_t,
+            "inspectionDate": date,
+        }
+
+        return tyre_dict
+
+    except ValidationError:
+        raise
+
+    except ValueError as e:
+        raise ValidationError(
+            f"Failed to parse tire dimensions: {e}",
+            code="TIRE_PARSE_ERROR",
+            details={"tyrename": tyrename},
+        )
+
+
+def sidewall_dimensions(tyrename: str) -> tuple:
+    """
+    Calculate sidewall dimensions from tire name.
+
+    Returns:
+        width_mm, height_mm, area_mm2
+    """
+    section_width, aspect_ratio, id_inch, tyrename = _parse_tyre_name(tyrename)
+
+    inner_dia = id_inch * TireConstants.MM_PER_INCH
+    section_height = section_width * aspect_ratio / 100
+
+    sidewall_dia = inner_dia + section_height
     sidewall_width = section_height
     sidewall_height = sidewall_dia * math.pi
     area_of_sidewall = sidewall_width * sidewall_height
@@ -71,45 +135,37 @@ def sidewall_dimensions(tyrename):
     return int(sidewall_width), int(sidewall_height), int(area_of_sidewall)
 
 
-def tread_dimensions(tyrename):
-    str1 = str(tyrename).upper()
-    st = str1.find("R") + 3
-    detail = str1[:st]
+def tread_dimensions(tyrename: str) -> tuple:
+    """
+    Calculate tread dimensions from tire name.
 
-    section_width = str1[0:3]
-    id_inch = detail[-2:]
+    Returns:
+        width_mm, height_mm, area_mm2
+    """
+    section_width, aspect_ratio, id_inch, tyrename = _parse_tyre_name(tyrename)
 
-    if len(detail) != 8:
-        aspect_ratio = 80
-    else:
-        aspect_ratio = detail[3:5]
+    inner_dia = id_inch * TireConstants.MM_PER_INCH
+    section_height = section_width * aspect_ratio / 100
+    outer_dia = inner_dia + section_height * 2
 
-    inner_dia = int(id_inch) * 25.4
-    section_height = int(section_width) * int(aspect_ratio) / 100
-    outer_dia = int(inner_dia) + int(section_height) * 2
-
-    tread_width = int(section_width)
+    tread_width = section_width
     tread_height = outer_dia * math.pi
     area_of_tread = tread_width * tread_height
 
     return int(tread_width), int(tread_height), int(area_of_tread)
 
 
-def innerwall_dimensions(tyrename):
-    str1 = str(tyrename).upper()
-    st = str1.find("R") + 3
-    detail = str1[:st]
+def innerwall_dimensions(tyrename: str) -> tuple:
+    """
+    Calculate innerwall dimensions from tire name.
 
-    section_width = str1[0:3]
-    id_inch = detail[-2:]
+    Returns:
+        width_mm, height_mm, area_mm2
+    """
+    section_width, aspect_ratio, id_inch, tyrename = _parse_tyre_name(tyrename)
 
-    if len(detail) != 8:
-        aspect_ratio = 80
-    else:
-        aspect_ratio = detail[3:5]
-
-    inner_dia = int(id_inch) * 25.4
-    section_height = int(section_width) * int(aspect_ratio) / 100
+    inner_dia = id_inch * TireConstants.MM_PER_INCH
+    section_height = section_width * aspect_ratio / 100
 
     innerwall_width = section_height
     innerwall_ref_dia = inner_dia + section_height
@@ -119,16 +175,29 @@ def innerwall_dimensions(tyrename):
     return int(innerwall_width), int(innerwall_height), int(area_of_innerwall)
 
 
-def bead_dimensions(tyrename, beadWidth_mm=20, beadCenterOffset_mm=0):
-    str1 = str(tyrename).upper()
-    st = str1.find("R") + 3
-    detail = str1[:st]
+def bead_dimensions(
+    tyrename: str,
+    bead_width_mm: Optional[int] = None,
+    bead_center_offset_mm: Optional[int] = None,
+) -> tuple:
+    """
+    Calculate bead dimensions from tire name.
 
-    id_inch = detail[-2:]
-    inner_dia = int(id_inch) * 25.4
+    Returns:
+        width_mm, height_mm, area_mm2
+    """
+    _, _, id_inch, tyrename = _parse_tyre_name(tyrename)
 
-    bead_width = beadWidth_mm
-    bead_ref_dia = inner_dia + bead_width + 2 * beadCenterOffset_mm
+    if bead_width_mm is None:
+        bead_width_mm = TireConstants.BEAD_WIDTH_MM
+
+    if bead_center_offset_mm is None:
+        bead_center_offset_mm = TireConstants.BEAD_CENTER_OFFSET_MM
+
+    inner_dia = id_inch * TireConstants.MM_PER_INCH
+
+    bead_width = bead_width_mm
+    bead_ref_dia = inner_dia + bead_width + 2 * bead_center_offset_mm
     bead_height = bead_ref_dia * math.pi
     area_of_bead = bead_width * bead_height
 
@@ -173,15 +242,32 @@ def defect_dimension(bbox):
 
 
 def resource_path(relative_path: str) -> str:
+    """
+    Get correct resource path for normal Python run and PyInstaller exe run.
+    """
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return os.path.join(sys._MEIPASS, relative_path)
+
     return os.path.join(os.path.abspath("."), relative_path)
 
 
 def load_env(root_dir=None):
+    """
+    Load .env file manually and return key-value dictionary.
+
+    If root_dir is given:
+        root_dir/.env will be used.
+
+    Otherwise:
+        project/.env or PyInstaller .env path will be used.
+    """
     env_vars = {}
 
-    env_path = resource_path(".env")
+    if root_dir is not None:
+        env_path = os.path.join(root_dir, ".env")
+    else:
+        env_path = resource_path(".env")
+
     with open(env_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()

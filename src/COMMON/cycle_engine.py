@@ -9,7 +9,7 @@ import json
 import time
 import threading
 import shutil
-from contextlib import nullcontext
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,72 +25,97 @@ from src.models.Pipeline import inference_pipeline_sidewall1_mahal_pca as sidewa
 from src.models.Pipeline import inference_pipeline_sidewall2_mahal_pca as sidewall2
 from src.models.Pipeline import inference_pipeline_tread_mahal_pca as tread
 from src.models.Pipeline.yolo_patch_classifier import load_yolo_seg
+from src.COMMON.exceptions import ModelLoadError
 
+logger = logging.getLogger(__name__)
+
+# Attempt to load optional modules with proper error handling
+build_r_detector = None
 try:
     from src.models.Pipeline.R_Detection_align_crop import build_r_detector
-except Exception:
-    build_r_detector = None
+except ImportError as e:
+    logger.warning(f"R-Detection module not available (ImportError): {e}")
+except Exception as e:
+    logger.error(f"Unexpected error loading R-Detection module: {e}")
 
+TRTViTFeatureExtractor = None
 try:
     from src.models.Pipeline.vit_trt_inference import TRTViTFeatureExtractor
-except Exception:
-    try:
-        from src.models.Pipeline.vit_trt_inference import TRTViTFeatureExtractor
-    except Exception:
-        TRTViTFeatureExtractor = None
+except ImportError as e:
+    logger.warning(f"TensorRT ViT inference not available (ImportError): {e}")
+except Exception as e:
+    logger.error(f"Unexpected error loading TensorRT ViT: {e}")
 
 from src.camera.HARDWARE_TRIGGER import (
     get_camera_to_side_map,
     get_side_to_camera_map,
 )
+
+# Optional live inspection state
+def set_live_progress(*args, **kwargs):
+    """Default no-op for live progress when module unavailable."""
+    pass
+
 try:
     from src.COMMON.live_inspection_state import set_live_progress
-except Exception:
-    def set_live_progress(*args, **kwargs):
-        pass
+except ImportError as e:
+    logger.debug(f"Live inspection state module not available: {e}")
+except Exception as e:
+    logger.warning(f"Failed to import live_inspection_state: {e}")
+
+# Optional R-inner mapping alignment
+extract_sidewall_r_anchor_from_meta = None
 try:
     from src.models.Pipeline.R_inner_mapping_alignment import (
         extract_sidewall_r_anchor_from_meta,
     )
+except ImportError as e:
+    logger.debug(f"R-inner mapping alignment not available: {e}")
 except Exception as e:
-    print(f"[MAIN][WARN] failed to import extract_sidewall_r_anchor_from_meta: {e}")
-    extract_sidewall_r_anchor_from_meta = None
+    logger.warning(f"Failed to import R-inner mapping alignment: {e}")
+
 # =========================================================
 # THREAD OPTIMIZATION
 # =========================================================
 try:
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
-except Exception:
-    pass
+    logger.debug("PyTorch thread optimization applied")
+except Exception as e:
+    logger.warning(f"Failed to optimize PyTorch threads: {e}")
 
 try:
     cv2.setNumThreads(0)
-except Exception:
-    pass
+    logger.debug("OpenCV thread optimization applied")
+except Exception as e:
+    logger.warning(f"Failed to optimize OpenCV threads: {e}")
 
 
 # =========================================================
-# GLOBALS
+# CONFIGURATION & GLOBALS
 # =========================================================
-DEVICE = "cuda"
+from src.COMMON.config import get_config
 
+_config = get_config()
+
+# Load from centralized configuration
+DEVICE = _config.inference.device.value
 PARALLEL_INFER = True
 PARALLEL_CALIB = False
-ENABLE_WARMUP = True
+ENABLE_WARMUP = _config.inference.enable_warmup
 
 INFER_SIDE_WORKERS = 5
 CALIB_SIDE_WORKERS = 1
 
-R_ALIGN_GPU_CONCURRENCY = 5
-VIT_GPU_CONCURRENCY = 5
-YOLO_GPU_CONCURRENCY = 5
+R_ALIGN_GPU_CONCURRENCY = _config.inference.r_align_gpu_concurrency
+VIT_GPU_CONCURRENCY = _config.inference.vit_gpu_concurrency
+YOLO_GPU_CONCURRENCY = _config.inference.yolo_gpu_concurrency
 
-USE_SHARED_R_DETECTOR = True
-SAVE_CYCLE_SUMMARY = True
-DEFAULT_TYRE_NAME = "195_65_R15"
-DEFAULT_USE_YOLO_SEG = True
-SEG_IMGSZ = 224
+USE_SHARED_R_DETECTOR = _config.inference.use_shared_r_detector
+SAVE_CYCLE_SUMMARY = _config.inference.save_cycle_summary
+DEFAULT_TYRE_NAME = _config.inference.default_tyre_name
+DEFAULT_USE_YOLO_SEG = _config.inference.use_yolo_seg
+SEG_IMGSZ = _config.inference.seg_imgsz
 
 ENABLE_STAGE_PIPELINE = True
 PIPELINE_FALLBACK_TO_INFER_SINGLE = False

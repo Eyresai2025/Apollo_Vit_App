@@ -35,7 +35,6 @@ from snap7 import Client # type: ignore
 
 ####Local files imports
 from src.Main_cam import CAMERA_CAPTURE_ENABLED, start_continuous_cycle
-from src.COMMON.db import get_db
 from src.COMMON.system_check import show_startup_system_popup
 from src.COMMON.full_hardware_check import is_hardware_ready, get_hardware_state
 from src.COMMON.component_health_service import ComponentHealthService
