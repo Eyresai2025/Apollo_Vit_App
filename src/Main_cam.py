@@ -38,6 +38,7 @@ from src.camera.HARDWARE_TRIGGER import (
     get_camera_to_side_map,
     get_side_to_camera_map,
 )
+from src.device.sku_profile_runtime import load_sku_camera_profile
 try:
     from src.COMMON.live_inspection_state import set_live_progress
 except Exception:
@@ -148,6 +149,21 @@ class ContinuousCycleWorker(QObject):
                 "Update src/camera/HARDWARE_TRIGGER.py."
             )
  
+        self.status_update.emit(f" Loading camera profile for SKU: {self.sku_name}")
+
+        camera_profile = load_sku_camera_profile(
+            media_root=self.media_root,
+            sku_name=self.sku_name,
+        )
+
+        if not hasattr(self.multi_camera_manager, "apply_camera_profile"):
+            raise RuntimeError(
+                "multi_camera_manager does not support apply_camera_profile(). "
+                "Update src/camera/HARDWARE_TRIGGER.py."
+            )
+
+        self.multi_camera_manager.apply_camera_profile(camera_profile)
+
         self.status_update.emit(" Configuring cameras for Live...")
         self.multi_camera_manager.start_all_streams()
  

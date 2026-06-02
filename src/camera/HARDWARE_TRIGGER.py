@@ -774,8 +774,8 @@ class LineScanCamera:
         self._set_node("ExposureTime", safe_exposure)
         self._set_node("Gain", self.gain)
 
-        self._set_node("GevSCPSPacketSize", PACKET_SIZE)
-        self._set_node("GevSCPD", PACKET_DELAY)
+        self._set_node("GevSCPSPacketSize", getattr(self, "packet_size", PACKET_SIZE))
+        self._set_node("GevSCPD", getattr(self, "packet_delay", PACKET_DELAY))
 
         self._configure_trigger()
 
@@ -1121,7 +1121,14 @@ class CameraActor:
             except Exception:
                 pass
 
+def _profile_bool(value, default=False) -> bool:
+    if isinstance(value, bool):
+        return value
 
+    if value is None or str(value).strip() == "":
+        return bool(default)
+
+    return str(value).strip().lower() in ("1", "true", "yes", "on", "y")
 # =========================================================
 # MULTI-CAMERA MANAGER
 # =========================================================
@@ -1190,6 +1197,125 @@ class MultiCameraManager:
     def set_plc_interface(self, plc_interface: Any) -> None:
         self.plc_interface = plc_interface
 
+    def apply_camera_profile(self, profile: Dict[str, Any]) -> None:
+        """
+        Apply SKU-wise camera profile to already-created LineScanCamera objects.
+
+        Important:
+        - Test Mode still only connects cameras.
+        - Live Mode calls this before start_all_streams().
+        - For current testing, serials should match .env serials.
+        """
+
+        if not isinstance(profile, dict):
+            raise ValueError("camera profile must be a dict")
+
+        sku_name = profile.get("sku_name", "-")
+        cameras_cfg = profile.get("cameras", {}) or {}
+
+        if not cameras_cfg:
+            raise ValueError(f"No cameras found in camera profile for SKU={sku_name}")
+
+        log("=" * 60)
+        log(f"[CAMERA PROFILE] Applying SKU camera profile | SKU={sku_name}")
+        log("=" * 60)
+
+        # Refresh side/serial maps from profile
+        for side_name, cfg in cameras_cfg.items():
+            if not isinstance(cfg, dict):
+                continue
+
+            serial = str(cfg.get("serial", "")).strip()
+            side_name = str(side_name).strip().lower()
+
+            if serial:
+                self.side_to_camera[side_name] = serial
+                self.camera_to_side.setdefault(serial, side_name)
+
+        for cam in self.cameras:
+            selected_cfg = None
+            selected_side = None
+
+            # Match using logical role name: sidewall1, sidewall2, tread, innerwall, bead
+            for role in getattr(cam, "roles", []):
+                role_name = str(role.get("name", "")).strip().lower()
+
+                cfg = cameras_cfg.get(role_name)
+
+                if not isinstance(cfg, dict):
+                    continue
+
+                profile_serial = str(cfg.get("serial", "")).strip()
+
+                if profile_serial and profile_serial != str(cam.serial_number):
+                    log(
+                        f"[CAMERA PROFILE][WARN] serial mismatch for role={role_name} | "
+                        f"profile_serial={profile_serial} | connected_serial={cam.serial_number}. "
+                        f"Using connected camera object for this test."
+                    )
+
+                role["enabled"] = _profile_bool(cfg.get("enabled", True), True)
+                role["group"] = str(cfg.get("group", role.get("group", "main"))).strip().lower()
+
+                if selected_cfg is None and role["enabled"]:
+                    selected_cfg = cfg
+                    selected_side = role_name
+
+            if selected_cfg is None:
+                log(f"[CAMERA PROFILE][WARN] No enabled profile role matched serial={cam.serial_number}")
+                continue
+
+            cam.width = int(selected_cfg.get("width", cam.width))
+
+            # Device Page may save "height"; live camera code uses "camera_height"
+            cam.camera_height = int(
+                selected_cfg.get(
+                    "camera_height",
+                    selected_cfg.get("height", cam.camera_height),
+                )
+            )
+
+            cam.final_height = int(selected_cfg.get("final_height", cam.final_height))
+            cam.pixel_format = str(selected_cfg.get("pixel_format", cam.pixel_format))
+            cam.num_stream_buffers = int(
+                selected_cfg.get("num_stream_buffers", cam.num_stream_buffers)
+            )
+
+            cam.exposure_auto_limit_auto = str(
+                selected_cfg.get("exposure_auto_limit_auto", cam.exposure_auto_limit_auto)
+            )
+            cam.exposure_time = float(selected_cfg.get("exposure_time", cam.exposure_time))
+            cam.gain = float(selected_cfg.get("gain", cam.gain))
+
+            cam.acquisition_line_rate_enable = _profile_bool(
+                selected_cfg.get(
+                    "acquisition_line_rate_enable",
+                    cam.acquisition_line_rate_enable,
+                ),
+                cam.acquisition_line_rate_enable,
+            )
+
+            cam.acquisition_line_rate = float(
+                selected_cfg.get("acquisition_line_rate", cam.acquisition_line_rate) or 0.0
+            )
+
+            cam.acquisition_mode = str(
+                selected_cfg.get("acquisition_mode", cam.acquisition_mode)
+            )
+
+            # Optional per-profile packet settings
+            cam.packet_size = int(selected_cfg.get("packet_size", PACKET_SIZE))
+            cam.packet_delay = int(selected_cfg.get("packet_delay", PACKET_DELAY))
+
+            log(
+                f"[CAMERA PROFILE] Applied | side={selected_side} | serial={cam.serial_number} | "
+                f"width={cam.width} | height={cam.camera_height} | final_height={cam.final_height} | "
+                f"pixel={cam.pixel_format} | exposure={cam.exposure_time} | gain={cam.gain} | "
+                f"line_rate_enable={cam.acquisition_line_rate_enable} | "
+                f"line_rate={cam.acquisition_line_rate} | packet={cam.packet_size}/{cam.packet_delay}"
+            )
+
+        log("[CAMERA PROFILE] Apply completed")
     def connect_all(self, fail_fast: bool = False) -> bool:
         log("=" * 60)
         log(f"Connecting {len(self.cameras)} unique Lucid camera(s)")

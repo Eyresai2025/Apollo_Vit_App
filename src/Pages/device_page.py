@@ -25,6 +25,7 @@ from src.device.laser_profile_manager import (
 from src.device.teledyne_laser_manager import TeledyneLaserManager
 from src.workers.laser_live_profile_worker import LaserLiveProfileWorker
 from src.workers.laser_capture_worker import LaserCaptureWorker
+from src.device.sku_device_profile_store import SKUDeviceProfileStore
 
 class DevicePage(QWidget):
     def __init__(self, parent=None):
@@ -35,7 +36,7 @@ class DevicePage(QWidget):
 
         self.laser_profile_manager = LaserProfileManager()
         self.laser_manager = TeledyneLaserManager()
-
+        self.sku_profile_store = SKUDeviceProfileStore("media")
         self.selected_serial = None
         self.camera_settings_by_serial = {}
 
@@ -730,12 +731,29 @@ class DevicePage(QWidget):
 
             settings["serial"] = serial
             settings["enabled"] = enabled
-            settings["trigger_mode"] = "On" if settings.get("use_hardware_trigger", True) else "Off"
+
+            # Convert Device Page height name to Live camera profile name
+            if "height" in settings:
+                settings["camera_height"] = int(settings.get("height", 14000))
+
+            # These are GLOBAL for Apollo Live.
+            # They come from .env / HARDWARE_TRIGGER.py, not SKU profile.
+            for key in [
+                "use_hardware_trigger",
+                "line_selector",
+                "line_mode",
+                "line_source",
+                "trigger_selector",
+                "trigger_source",
+                "trigger_activation",
+                "trigger_mode",
+            ]:
+                settings.pop(key, None)
 
             profile["cameras"][zone_key] = settings
             saved_count += 1
 
-        path = self.profile_manager.save_profile(sku, profile)
+        path = self.sku_profile_store.save_camera_profile(sku, profile)
 
         msg = f"Saved {saved_count} camera profile(s):\n{path}"
 
@@ -752,7 +770,7 @@ class DevicePage(QWidget):
             QMessageBox.warning(self, "Missing SKU", "Please enter SKU name.")
             return
 
-        profile = self.profile_manager.load_profile(sku)
+        profile = self.sku_profile_store.load_camera_profile(sku)
         cameras_config = profile.get("cameras", {})
 
         for zone_name, zone_key in ZONE_KEYS.items():
@@ -1488,7 +1506,7 @@ class DevicePage(QWidget):
             profile["lasers"][zone_key] = settings
             saved_count += 1
 
-        path = self.laser_profile_manager.save_profile(sku, profile)
+        path = self.sku_profile_store.save_laser_profile(sku, profile)
 
         msg = f"Saved {saved_count} laser profile(s):\n{path}"
 
@@ -1506,7 +1524,7 @@ class DevicePage(QWidget):
             QMessageBox.warning(self, "Missing SKU", "Please enter SKU name.")
             return
 
-        profile = self.laser_profile_manager.load_profile(sku)
+        profile = self.sku_profile_store.load_laser_profile(sku)
         lasers_config = profile.get("lasers", {})
 
         for zone_name, zone_key in LASER_ZONE_KEYS.items():
