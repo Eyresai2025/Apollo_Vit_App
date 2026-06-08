@@ -73,7 +73,7 @@ from src.UI.gui_helpers import (
 from src.Pages.capture_settings_tab import CameraCaptureSettingsTab
 from src.COMMON.live_sku_resolver import resolve_live_sku_from_plc
 from src.COMMON.plc_gui_commands import PlcGuiCommandService
-
+from src.Pages.roi_px_mm_tool import MainWindow as RoiMeasurementWindow, DARK_STYLE as ROI_DARK_STYLE
 os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
 os.environ["QT_DEVICE_PIXEL_RATIO"] = "0"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
@@ -228,6 +228,7 @@ class MainWindow(QMainWindow):
         self.device_page = None
         self.recipe_management_page = None
         self.capture_settings_page = None
+        self.roi_measurement_window = None
         self._last_stack_widget = None
         self.available_skus = []
         self.pending_preload_sku = None
@@ -612,6 +613,29 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Error displaying images: {e}")
     
+    def open_roi_measurement_tool(self):
+        """
+        Opens the ROI + 4-point px/mm measurement tool as a separate PyQt window.
+        Uses the existing QApplication. Do NOT create another QApplication here.
+        """
+        try:
+            if self.roi_measurement_window is None:
+                self.roi_measurement_window = RoiMeasurementWindow()
+                self.roi_measurement_window.setStyleSheet(ROI_DARK_STYLE)
+
+                # Keep object alive after close/show again
+                self.roi_measurement_window.setAttribute(Qt.WA_DeleteOnClose, False)
+
+            self.roi_measurement_window.show()
+            self.roi_measurement_window.raise_()
+            self.roi_measurement_window.activateWindow()
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "ROI Measurement Tool Error",
+                f"Failed to open ROI measurement tool:\n\n{e}"
+            )
     # ========================================================================
     # LIVE INSPECTION WITH THREAD SAFETY    
     # ========================================================================
@@ -1686,6 +1710,9 @@ class MainWindow(QMainWindow):
             ("Action Code Plan", "action_code_plan.png", self.open_action_code_plan),
             ("Dashboard", "dashboard.png", self.open_dashboard),
             ("Annotation Tool", "annotation_tool.png", self.open_annotation_tool),
+
+            # New button
+            ("ROI Measure", "cam.png", self.open_roi_measurement_tool),
         ]
         
         def load_square_icon(icon_path: str, size: int = 18) -> QIcon:

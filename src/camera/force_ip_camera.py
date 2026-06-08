@@ -1,7 +1,7 @@
 from arena_api.system import system
 
 SERIAL = "250500042"
-NEW_IP = "192.168.3.24"
+NEW_IP = "192.168.1.22"
 NEW_SUBNET = "255.255.255.0"
 NEW_GATEWAY = "0.0.0.0"
 

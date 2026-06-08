@@ -255,18 +255,32 @@ def load_env(root_dir=None):
     """
     Load .env file manually and return key-value dictionary.
 
-    If root_dir is given:
-        root_dir/.env will be used.
+    Supports both:
+    1. Project folder path:
+       C:/Users/.../Apollo_Vit_App
 
-    Otherwise:
-        project/.env or PyInstaller .env path will be used.
+    2. Direct .env file path:
+       C:/Users/.../Apollo_Vit_App/.env
     """
     env_vars = {}
 
     if root_dir is not None:
-        env_path = os.path.join(root_dir, ".env")
+        root_dir = str(root_dir)
+
+        # If direct .env file path is passed
+        if os.path.isfile(root_dir):
+            env_path = root_dir
+
+        # If project folder path is passed
+        else:
+            env_path = os.path.join(root_dir, ".env")
     else:
         env_path = resource_path(".env")
+
+    print(f"[ENV] Loading env from: {env_path}")
+
+    if not os.path.exists(env_path):
+        raise FileNotFoundError(f".env file not found: {env_path}")
 
     with open(env_path, "r", encoding="utf-8") as f:
         for line in f:

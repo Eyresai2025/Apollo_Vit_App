@@ -7,23 +7,26 @@
 # =========================================================
 
 import os
+import sys
+import json
 import time
 import queue
 import ctypes
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QProcess
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QLabel, QLineEdit, QPushButton, QProgressBar, QComboBox,
     QSpinBox, QDoubleSpinBox, QFileDialog, QTextEdit, QGroupBox,
-    QMessageBox, QScrollArea, QSizePolicy, QFrame
+    QMessageBox, QScrollArea, QSizePolicy, QFrame, QTabWidget,
+    QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox
 )
 from arena_api.system import system
 from arena_api.buffer import BufferFactory
@@ -615,7 +618,7 @@ class CameraCaptureWorker(QThread):
 # =========================================================
 # UI TAB
 # =========================================================
-class CameraCaptureSettingsTab(QWidget):
+class ManualCameraCaptureTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -1016,3 +1019,630 @@ class CameraCaptureSettingsTab(QWidget):
         self.append_log("[ERROR]")
         self.append_log(err)
         QMessageBox.critical(self, "Capture Error", err)
+
+
+# =========================================================
+# AUTO TAB: RUN STANDALONE PLC SOFTWARE + FFC SCRIPT
+# =========================================================
+class AutoPLCFFCProcessTab(QWidget):
+    """
+    Runs the standalone PLC software trigger + software FFC capture script
+    as a separate Python process.
+
+    Start button starts a fresh process.
+    Stop button kills the process tree and releases camera handles.
+    Console output is shown in the terminal box.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.process: Optional[QProcess] = None
+        self.build_ui()
+
+    # -----------------------------------------------------
+    def build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        content = QWidget()
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main = QVBoxLayout(content)
+        main.setContentsMargins(18, 18, 18, 18)
+        main.setSpacing(12)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        title = QLabel("Auto Capture — PLC Software Trigger + Software FFC")
+        title.setObjectName("PageTitle")
+        main.addWidget(title)
+
+        # ---------------- PATH SETTINGS ----------------
+        path_box = QGroupBox("Path Settings")
+        path_layout = QFormLayout(path_box)
+        path_layout.setSpacing(10)
+
+        src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        camera_dir = os.path.join(src_dir, "camera")
+        default_runner = os.path.join(camera_dir, "lucid_plc_ffc_env_runner.py")
+        default_save = os.path.join(os.path.abspath(os.path.join(src_dir, "..")), "media", "Auto_FFC_Capture")
+
+        self.script_path_edit = QLineEdit(default_runner)
+        self.save_dir_edit = QLineEdit(default_save)
+
+        script_browse = QPushButton("Browse")
+        script_browse.clicked.connect(self.browse_script_path)
+        save_browse = QPushButton("Browse")
+        save_browse.clicked.connect(self.browse_save_dir)
+
+        script_row = QHBoxLayout()
+        script_row.addWidget(self.script_path_edit)
+        script_row.addWidget(script_browse)
+
+        save_row = QHBoxLayout()
+        save_row.addWidget(self.save_dir_edit)
+        save_row.addWidget(save_browse)
+
+        path_layout.addRow("Runner Script", script_row)
+        path_layout.addRow("Save Folder", save_row)
+        main.addWidget(path_box)
+
+        # ---------------- CAPTURE + PLC SETTINGS ----------------
+        cap_box = QGroupBox("Capture / PLC Settings")
+        cap_grid = QGridLayout(cap_box)
+        cap_grid.setSpacing(12)
+
+        left = QFormLayout()
+        left.setSpacing(10)
+        right = QFormLayout()
+        right.setSpacing(10)
+
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["PLC_SOFTWARE", "SOFTWARE", "FREE"])
+        self.mode_combo.setCurrentText("PLC_SOFTWARE")
+
+        self.num_main_spin = self.make_spin(1, 1000, 1)
+        self.num_bead_spin = self.make_spin(0, 1000, 1)
+        self.num_main_spin.valueChanged.connect(self.num_bead_spin.setValue)
+        self.camera_height_spin = self.make_spin(1, 100000, 14000)
+        self.final_height_spin = self.make_spin(1, 200000, 42000)
+        self.pixel_format_combo = QComboBox()
+        self.pixel_format_combo.addItems(["Mono16", "Mono8"])
+
+        self.stream_buffers_spin = self.make_spin(1, 128, 16)
+        self.buffer_timeout_spin = self.make_spin(1000, 300000, 30000)
+        self.packet_size_spin = self.make_spin(576, 9014, 9000)
+        self.packet_delay_spin = self.make_spin(0, 100000, 1000)
+        self.png_compression_spin = self.make_spin(0, 9, 0)
+
+        self.plc_ip_edit = QLineEdit("192.168.10.1")
+        self.plc_rack_spin = self.make_spin(0, 10, 0)
+        self.plc_slot_spin = self.make_spin(0, 10, 1)
+        self.plc_db_spin = self.make_spin(1, 999, 74)
+        self.main_byte_spin = self.make_spin(0, 4096, 0)
+        self.main_bit_spin = self.make_spin(0, 7, 3)
+        self.bead_byte_spin = self.make_spin(0, 4096, 86)
+        self.bead_bit_spin = self.make_spin(0, 7, 0)
+        self.poll_delay_spin = self.make_double(0.001, 1.0, 0.005, 3)
+
+        left.addRow("Capture Mode", self.mode_combo)
+        left.addRow("Main Images", self.num_main_spin)
+        left.addRow("Bead Images", self.num_bead_spin)
+        left.addRow("Camera/Patch Height", self.camera_height_spin)
+        left.addRow("Final Stitch Height", self.final_height_spin)
+        left.addRow("Pixel Format", self.pixel_format_combo)
+        left.addRow("Stream Buffers", self.stream_buffers_spin)
+        left.addRow("Buffer Timeout ms", self.buffer_timeout_spin)
+        left.addRow("Packet Size", self.packet_size_spin)
+        left.addRow("Packet Delay", self.packet_delay_spin)
+        left.addRow("PNG Compression", self.png_compression_spin)
+
+        right.addRow("PLC IP", self.plc_ip_edit)
+        right.addRow("PLC Rack", self.plc_rack_spin)
+        right.addRow("PLC Slot", self.plc_slot_spin)
+        right.addRow("PLC DB", self.plc_db_spin)
+        right.addRow("Main Trigger Byte", self.main_byte_spin)
+        right.addRow("Main Trigger Bit", self.main_bit_spin)
+        right.addRow("Bead Trigger Byte", self.bead_byte_spin)
+        right.addRow("Bead Trigger Bit", self.bead_bit_spin)
+        right.addRow("PLC Poll Delay sec", self.poll_delay_spin)
+
+        cap_grid.addLayout(left, 0, 0)
+        cap_grid.addLayout(right, 0, 1)
+        main.addWidget(cap_box)
+
+        # ---------------- CAMERA CONFIG TABLE ----------------
+        cam_box = QGroupBox("Camera Settings")
+        cam_l = QVBoxLayout(cam_box)
+        cam_l.setSpacing(8)
+
+        hint = QLabel(
+            "Line Rate blank/None = skip line-rate. For serial 250500042 keep line-rate blank because this 2K camera skips AcquisitionLineRate."
+        )
+        hint.setWordWrap(True)
+        hint.setObjectName("InfoNote")
+        cam_l.addWidget(hint)
+
+        self.camera_table = QTableWidget()
+        self.camera_table.setColumnCount(9)
+        self.camera_table.setHorizontalHeaderLabels([
+            "Serial", "Enabled", "Camera Name", "Width", "Line Rate", "Exposure us", "Gain", "Main Role", "Bead Role"
+        ])
+        self.camera_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.camera_table.setAlternatingRowColors(True)
+        self.camera_table.setMinimumHeight(190)
+        cam_l.addWidget(self.camera_table)
+        self.load_default_camera_table()
+
+        main.addWidget(cam_box)
+
+        # ---------------- FFC SETTINGS ----------------
+        ffc_box = QGroupBox("Software FFC Settings")
+        ffc_grid = QGridLayout(ffc_box)
+        ffc_grid.setSpacing(12)
+
+        ffc_left = QFormLayout()
+        ffc_right = QFormLayout()
+        self.enable_ffc_chk = QCheckBox("Enable Software FFC")
+        self.enable_ffc_chk.setChecked(True)
+        self.save_raw_chk = QCheckBox("Save Raw Images")
+        self.save_raw_chk.setChecked(True)
+        self.save_corrected_chk = QCheckBox("Save Corrected Images")
+        self.save_corrected_chk.setChecked(True)
+        self.save_gain_chk = QCheckBox("Save Gain .npy")
+        self.save_gain_chk.setChecked(False)
+
+        self.gain_target_combo = QComboBox()
+        self.gain_target_combo.addItems(["PERCENTILE_95", "MEAN", "MAX"])
+        self.gain_min_spin = self.make_double(0.01, 100.0, 1.0, 3)
+        self.gain_max_spin = self.make_double(0.01, 100.0, 15.99, 3)
+        self.ffc_row_block_spin = self.make_spin(16, 10000, 512)
+
+        ffc_left.addRow(self.enable_ffc_chk)
+        ffc_left.addRow(self.save_raw_chk)
+        ffc_left.addRow(self.save_corrected_chk)
+        ffc_left.addRow(self.save_gain_chk)
+        ffc_right.addRow("Gain Target Mode", self.gain_target_combo)
+        ffc_right.addRow("Gain Min", self.gain_min_spin)
+        ffc_right.addRow("Gain Max", self.gain_max_spin)
+        ffc_right.addRow("FFC Row Block", self.ffc_row_block_spin)
+
+        ffc_grid.addLayout(ffc_left, 0, 0)
+        ffc_grid.addLayout(ffc_right, 0, 1)
+        main.addWidget(ffc_box)
+
+        # ---------------- CONTROL ----------------
+        control_box = QGroupBox("Auto Capture Control")
+        control_l = QVBoxLayout(control_box)
+        btn_row = QHBoxLayout()
+
+        self.start_btn = QPushButton("Start Auto Capture")
+        self.start_btn.clicked.connect(self.start_process)
+        self.stop_btn = QPushButton("Stop / Kill Process")
+        self.stop_btn.clicked.connect(self.stop_process)
+        self.stop_btn.setEnabled(False)
+
+        btn_row.addWidget(self.start_btn)
+        btn_row.addWidget(self.stop_btn)
+        btn_row.addStretch()
+
+        self.status_label = QLabel("Ready")
+        self.status_label.setObjectName("InfoNote")
+        self.status_label.setWordWrap(True)
+
+        control_l.addLayout(btn_row)
+        control_l.addWidget(self.status_label)
+        main.addWidget(control_box)
+
+        # ---------------- TERMINAL ----------------
+        term_title = QLabel("Terminal Output")
+        term_title.setObjectName("PageTitle")
+        main.addWidget(term_title)
+
+        self.terminal = QTextEdit()
+        self.terminal.setReadOnly(True)
+        self.terminal.setMinimumHeight(260)
+        self.terminal.setStyleSheet("""
+            QTextEdit {
+                background: #111;
+                color: #00ff7f;
+                border-radius: 8px;
+                padding: 8px;
+                font-family: Consolas;
+                font-size: 12px;
+            }
+        """)
+        main.addWidget(self.terminal, 1)
+
+        self.setStyleSheet(self._style())
+
+    # -----------------------------------------------------
+    def _style(self):
+        return """
+            QWidget { background: #f7f7f9; font-family: Arial; font-size: 13px; }
+            QLabel#PageTitle { font-size: 20px; font-weight: bold; color: #5b168b; }
+            QLabel#InfoNote {
+                background: #fff7df;
+                border: 1px solid #e8d28a;
+                border-radius: 8px;
+                padding: 8px 10px;
+                color: #4b3b00;
+            }
+            QGroupBox {
+                background: white;
+                border: 1px solid #dedede;
+                border-radius: 12px;
+                margin-top: 12px;
+                padding: 14px;
+                font-weight: bold;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 14px;
+                padding: 0 6px;
+                color: #5b168b;
+            }
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+                min-height: 30px;
+                border: 1px solid #cfcfcf;
+                border-radius: 6px;
+                padding: 4px 8px;
+                background: white;
+            }
+            QPushButton {
+                min-height: 34px;
+                border-radius: 8px;
+                padding: 6px 16px;
+                background: #6d2fa0;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: #7e3bb8; }
+            QPushButton:disabled { background: #9a9a9a; }
+            QTableWidget {
+                background: white;
+                border: 1px solid #dedede;
+                border-radius: 8px;
+                gridline-color: #eeeeee;
+            }
+            QHeaderView::section {
+                background: #f1e9f8;
+                color: #5b168b;
+                padding: 6px;
+                border: none;
+                font-weight: bold;
+            }
+        """
+
+    # -----------------------------------------------------
+    def make_spin(self, min_val, max_val, default):
+        spin = QSpinBox()
+        spin.setRange(min_val, max_val)
+        spin.setValue(default)
+        return spin
+
+    # -----------------------------------------------------
+    def make_double(self, min_val, max_val, default, decimals):
+        spin = QDoubleSpinBox()
+        spin.setRange(min_val, max_val)
+        spin.setDecimals(decimals)
+        spin.setValue(default)
+        spin.setSingleStep(1.0)
+        return spin
+
+    # -----------------------------------------------------
+    def browse_script_path(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Runner Script",
+            self.script_path_edit.text(),
+            "Python Files (*.py);;All Files (*)"
+        )
+        if path:
+            self.script_path_edit.setText(path)
+
+    # -----------------------------------------------------
+    def browse_save_dir(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Save Folder",
+            self.save_dir_edit.text()
+        )
+        if folder:
+            self.save_dir_edit.setText(folder)
+
+    # -----------------------------------------------------
+    def load_default_camera_table(self):
+        rows = [
+            ["254901428", "1", "sidewall2", "4096", "8169.0", "122.0", "12.0", "sidewall2", ""],
+            ["254901432", "1", "sidewall1", "4096", "8169.0", "122.0", "12.0", "sidewall1", ""],
+            ["254901430", "1", "tread", "4096", "8169.0", "122.0", "12.0", "tread", ""],
+            ["250500042", "1", "inner_camera_used_for_inner_and_bead", "2048", "", "120.0", "12.0", "inner", "bead"],
+        ]
+        self.camera_table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            for c, value in enumerate(row):
+                item = QTableWidgetItem(str(value))
+                item.setTextAlignment(Qt.AlignCenter)
+                self.camera_table.setItem(r, c, item)
+
+    # -----------------------------------------------------
+    def _cell_text(self, row, col):
+        item = self.camera_table.item(row, col)
+        return item.text().strip() if item else ""
+
+    # -----------------------------------------------------
+    def build_camera_configs_json(self):
+        configs = {}
+        for row in range(self.camera_table.rowCount()):
+            serial = self._cell_text(row, 0)
+            if not serial:
+                continue
+
+            enabled_txt = self._cell_text(row, 1).lower()
+            enabled = enabled_txt not in ("0", "false", "no", "off", "disabled")
+            camera_name = self._cell_text(row, 2) or f"camera_{serial}"
+
+            try:
+                width = int(float(self._cell_text(row, 3)))
+            except Exception:
+                width = 4096
+
+            line_rate_txt = self._cell_text(row, 4)
+            line_rate = None
+            if line_rate_txt and line_rate_txt.lower() not in ("none", "null", "skip"):
+                try:
+                    line_rate = float(line_rate_txt)
+                except Exception:
+                    line_rate = None
+
+            try:
+                exposure = float(self._cell_text(row, 5))
+            except Exception:
+                exposure = 120.0
+
+            try:
+                gain = float(self._cell_text(row, 6))
+            except Exception:
+                gain = 12.0
+
+            roles = []
+            main_role = self._cell_text(row, 7)
+            bead_role = self._cell_text(row, 8)
+            if main_role:
+                roles.append({"name": main_role, "group": "main", "enabled": True})
+            if bead_role:
+                roles.append({"name": bead_role, "group": "bead", "enabled": True})
+
+            configs[serial] = {
+                "enabled": enabled,
+                "camera_name": camera_name,
+                "width": width,
+                "line_rate": line_rate,
+                "exposure_us": exposure,
+                "gain": gain,
+                "roles": roles,
+            }
+
+        return json.dumps(configs)
+
+    # -----------------------------------------------------
+    def build_env(self):
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
+        env.update({
+            "APOLLO_FFC_SAVE_DIR": self.save_dir_edit.text().strip(),
+            "APOLLO_CAPTURE_MODE": self.mode_combo.currentText(),
+            "APOLLO_NUM_FULL_IMAGES": str(self.num_main_spin.value()),
+            "APOLLO_NUM_BEAD_IMAGES": str(self.num_bead_spin.value()),
+            "APOLLO_CAMERA_HEIGHT": str(self.camera_height_spin.value()),
+            "APOLLO_FINAL_HEIGHT": str(self.final_height_spin.value()),
+            "APOLLO_PIXEL_FORMAT": self.pixel_format_combo.currentText(),
+            "APOLLO_NUM_STREAM_BUFFERS": str(self.stream_buffers_spin.value()),
+            "APOLLO_BUFFER_TIMEOUT_MS": str(self.buffer_timeout_spin.value()),
+            "APOLLO_PACKET_SIZE": str(self.packet_size_spin.value()),
+            "APOLLO_PACKET_DELAY": str(self.packet_delay_spin.value()),
+            "APOLLO_PNG_COMPRESSION": str(self.png_compression_spin.value()),
+
+            "APOLLO_PLC_IP": self.plc_ip_edit.text().strip(),
+            "APOLLO_PLC_RACK": str(self.plc_rack_spin.value()),
+            "APOLLO_PLC_SLOT": str(self.plc_slot_spin.value()),
+            "APOLLO_PLC_DB": str(self.plc_db_spin.value()),
+            "APOLLO_MAIN_PLC_BYTE": str(self.main_byte_spin.value()),
+            "APOLLO_MAIN_PLC_BIT": str(self.main_bit_spin.value()),
+            "APOLLO_BEAD_PLC_BYTE": str(self.bead_byte_spin.value()),
+            "APOLLO_BEAD_PLC_BIT": str(self.bead_bit_spin.value()),
+            "APOLLO_PLC_POLL_DELAY_SEC": str(self.poll_delay_spin.value()),
+
+            "APOLLO_ENABLE_SOFTWARE_FFC": "1" if self.enable_ffc_chk.isChecked() else "0",
+            "APOLLO_SAVE_RAW_IMAGES": "1" if self.save_raw_chk.isChecked() else "0",
+            "APOLLO_SAVE_CORRECTED_IMAGES": "1" if self.save_corrected_chk.isChecked() else "0",
+            "APOLLO_SAVE_GAIN_NPY": "1" if self.save_gain_chk.isChecked() else "0",
+            "APOLLO_GAIN_TARGET_MODE": self.gain_target_combo.currentText(),
+            "APOLLO_GAIN_RANGE_MIN": str(self.gain_min_spin.value()),
+            "APOLLO_GAIN_RANGE_MAX": str(self.gain_max_spin.value()),
+            "APOLLO_FFC_ROW_BLOCK": str(self.ffc_row_block_spin.value()),
+            "APOLLO_CAMERA_CONFIGS_JSON": self.build_camera_configs_json(),
+        })
+        return env
+
+    # -----------------------------------------------------
+    def start_process(self):
+        if self.process is not None and self.process.state() != QProcess.NotRunning:
+            QMessageBox.warning(self, "Already Running", "Auto capture is already running.")
+            return
+
+        script_path = self.script_path_edit.text().strip()
+        save_dir = self.save_dir_edit.text().strip()
+
+        if not script_path or not os.path.isfile(script_path):
+            QMessageBox.warning(self, "Missing Script", f"Runner script not found:\n{script_path}")
+            return
+
+        if not save_dir:
+            QMessageBox.warning(self, "Missing Save Folder", "Please select save folder.")
+            return
+
+        os.makedirs(save_dir, exist_ok=True)
+
+        self.terminal.clear()
+        self.append_terminal("=" * 80)
+        self.append_terminal("Starting Auto PLC Software + FFC capture...")
+        self.append_terminal(f"Script: {script_path}")
+        self.append_terminal(f"Save folder: {save_dir}")
+        self.append_terminal("=" * 80)
+
+        self.process = QProcess(self)
+        self.process.setProgram(sys.executable)
+        self.process.setArguments(["-u", script_path])
+        self.process.setWorkingDirectory(os.path.dirname(script_path))
+
+        env = self.build_env()
+        qenv = self.process.processEnvironment()
+        for key, value in env.items():
+            qenv.insert(str(key), str(value))
+        self.process.setProcessEnvironment(qenv)
+
+        self.process.readyReadStandardOutput.connect(self.read_stdout)
+        self.process.readyReadStandardError.connect(self.read_stderr)
+        self.process.finished.connect(self.process_finished)
+        self.process.errorOccurred.connect(self.process_error)
+
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.status_label.setText("Auto capture running...")
+
+        self.process.start()
+
+        if not self.process.waitForStarted(5000):
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.status_label.setText("Failed to start process")
+            QMessageBox.critical(self, "Start Failed", "Could not start auto capture process.")
+
+    # -----------------------------------------------------
+    def stop_process(self):
+        if self.process is None or self.process.state() == QProcess.NotRunning:
+            return
+
+        pid = int(self.process.processId())
+        self.append_terminal("")
+        self.append_terminal(f"[UI_STOP] Killing process tree PID={pid}")
+        self.status_label.setText("Stopping / killing capture process...")
+
+        if os.name == "nt" and pid > 0:
+            killer = QProcess(self)
+            killer.start("taskkill", ["/PID", str(pid), "/T", "/F"])
+            killer.waitForFinished(3000)
+        else:
+            self.process.kill()
+
+        if self.process is not None:
+            self.process.kill()
+
+    # -----------------------------------------------------
+    def read_stdout(self):
+        if self.process is None:
+            return
+        data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        if data:
+            self.append_terminal(data.rstrip())
+
+    # -----------------------------------------------------
+    def read_stderr(self):
+        if self.process is None:
+            return
+        data = bytes(self.process.readAllStandardError()).decode("utf-8", errors="replace")
+        if data:
+            self.append_terminal(data.rstrip())
+
+    # -----------------------------------------------------
+    def process_finished(self, exit_code, exit_status):
+        self.append_terminal("")
+        self.append_terminal(f"[PROCESS_FINISHED] exit_code={exit_code} exit_status={exit_status}")
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.status_label.setText("Process stopped / completed. You can start again.")
+
+    # -----------------------------------------------------
+    def process_error(self, error):
+        self.append_terminal(f"[PROCESS_ERROR] {error}")
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.status_label.setText("Process error")
+
+    # -----------------------------------------------------
+    def append_terminal(self, text):
+        self.terminal.append(str(text))
+        self.terminal.verticalScrollBar().setValue(
+            self.terminal.verticalScrollBar().maximum()
+        )
+
+    # -----------------------------------------------------
+    def closeEvent(self, event):
+        try:
+            self.stop_process()
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+
+# =========================================================
+# WRAPPER PAGE USED BY GUI.py
+# =========================================================
+class CameraCaptureSettingsTab(QWidget):
+    """
+    Main Capture page used by GUI.py.
+
+    Manual tab:
+        Uses the integrated QThread camera capture page.
+
+    Auto tab:
+        Runs standalone PLC_SOFTWARE + FFC capture as a separate process
+        with UI settings and terminal output.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.build_ui()
+
+    def build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.addTab(ManualCameraCaptureTab(parent=self), "Manual")
+        tabs.addTab(AutoPLCFFCProcessTab(parent=self), "Auto")
+
+        tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #dedede;
+                background: #f7f7f9;
+            }
+            QTabBar::tab {
+                background: #ffffff;
+                color: #5b168b;
+                padding: 10px 26px;
+                border: 1px solid #dedede;
+                border-bottom: none;
+                font-weight: bold;
+                min-width: 120px;
+            }
+            QTabBar::tab:selected {
+                background: #6d2fa0;
+                color: white;
+            }
+            QTabBar::tab:hover {
+                background: #f1e9f8;
+                color: #5b168b;
+            }
+        """)
+
+        root.addWidget(tabs)
