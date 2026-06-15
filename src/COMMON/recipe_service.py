@@ -193,7 +193,26 @@ class RecipeService:
             self.env.get("LASER_AXIS_IDS", ""),
             [7, 8, 9, 10, 11, 12],
         )
+    
+    def _position_sort_rank(self, position: str) -> int:
+        p = str(position or "").upper().strip()
+        p = p.replace("_", " ").replace("-", " ")
+        p = " ".join(p.split())
 
+        order = {
+            "HOME": 0,
+            "WORK 1": 1,
+            "WORK1": 1,
+            "WORK 2": 2,
+            "WORK2": 2,
+            "WORK 3": 3,
+            "WORK3": 3,
+            "WORK 4": 4,
+            "WORK4": 4,
+            "SAFE": 5,
+        }
+
+        return order.get(p, 99)
     # ------------------------------------------------------------
     # PRODUCTION RECIPE TARGET CONFIG
     # ------------------------------------------------------------
@@ -241,16 +260,22 @@ class RecipeService:
 
                 "target_name": target_name,
 
-                # DB53 write address
                 "write_db": int(item.get("db53_db", 53)),
                 "write_byte": int(item.get("db53_byte", -1)),
                 "type": str(item.get("db53_type", "REAL")).upper(),
 
-                # Keep DB75 info for display/reference/debug
                 "db75_db": int(item.get("db75_db", 75)),
                 "db75_byte": int(item.get("db75_byte", -1)),
                 "db75_type": str(item.get("db75_type", "REAL")).upper(),
             })
+
+        targets.sort(
+            key=lambda cfg: (
+                self._position_sort_rank(cfg.get("position", "")),
+                int(cfg.get("axis_id", 9999)),
+                int(cfg.get("target_index", 9999)),
+            )
+        )
 
         return targets
 

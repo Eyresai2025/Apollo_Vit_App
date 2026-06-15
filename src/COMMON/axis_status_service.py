@@ -224,6 +224,29 @@ class AxisStatusService:
             "tolerance": self._env_float(p + "TOLERANCE", self.running_recipe_tolerance),
         }
 
+    def _position_sort_rank(self, position: str) -> int:
+        """
+        Sort Axis Status rows by position group:
+        HOME first, then WORK 1, WORK 2, WORK 3, WORK 4, SAFE.
+        """
+        p = str(position or "").upper().strip()
+        p = p.replace("_", " ").replace("-", " ")
+        p = " ".join(p.split())
+
+        order = {
+            "HOME": 0,
+            "WORK 1": 1,
+            "WORK1": 1,
+            "WORK 2": 2,
+            "WORK2": 2,
+            "WORK 3": 3,
+            "WORK3": 3,
+            "WORK 4": 4,
+            "WORK4": 4,
+            "SAFE": 5,
+        }
+
+        return order.get(p, 99)
     def _read_axis_live_state(self, client, axis_id: int) -> Dict[str, Any]:
         cfg = self._axis_cfg(axis_id)
 
@@ -776,6 +799,13 @@ class AxisStatusService:
 
                 "status": status,
             })
+
+        rows.sort(
+            key=lambda row: (
+                self._position_sort_rank(row.get("position", "")),
+                int(row.get("target_index", 9999)),
+            )
+        )
 
         overall_ok = bool(rows) and all(row.get("status") in ("OK", "DISABLED") for row in rows)
 
