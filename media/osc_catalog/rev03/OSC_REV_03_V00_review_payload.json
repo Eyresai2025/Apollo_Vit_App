@@ -1,0 +1,5306 @@
+{
+  "source": "pdf:SOP-GQ&BE-001 Global Off Standard Catalogue for PCR Tyres (1) 2.pdf",
+  "header": {
+    "document_name": "Global Off Standard Catalogue for PCR Tyres",
+    "document_no": "SOP-GQ&BE-001",
+    "revision_no": "03",
+    "document_status": "Approved",
+    "date_of_release": "05/07/2023",
+    "date_of_applicability": "17/07/2023",
+    "process_owner": "Corporate",
+    "security_classification": "Internal"
+  },
+  "version_id": "OSC_REV_03_V00",
+  "local_version_no": "00",
+  "sections": [
+    {
+      "catalog_code": "101",
+      "section_name": "Tread blisters",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 2,
+      "rows": [
+        {
+          "description": "No blisters in tread",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "101.1",
+          "source_page": 2
+        },
+        {
+          "description": "Air entrapment between tread and cap strip",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "101.2",
+          "source_page": 2
+        },
+        {
+          "description": "Air entrapment between tread and steel belt",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "101.3",
+          "source_page": 2
+        }
+      ],
+      "section_order": 1
+    },
+    {
+      "catalog_code": "102",
+      "section_name": "Tread Lightness",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 2,
+      "rows": [
+        {
+          "description": "Rounding of imperfection < 2 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "102.1",
+          "source_page": 2
+        },
+        {
+          "description": "Length of imperfection < 5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "102.2",
+          "source_page": 2
+        },
+        {
+          "description": "Max. 2 imperfections in non-successive blocks",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "102.3",
+          "source_page": 2
+        },
+        {
+          "description": "Max. 3 imperfections",
+          "action_code": "3",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 4,
+          "condition_code": "102.4",
+          "source_page": 2
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "102.5",
+          "source_page": 2
+        },
+        {
+          "description": "5 or more imperfections which are longer than 10mm and rounded 5 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 6,
+          "condition_code": "102.6",
+          "source_page": 2
+        }
+      ],
+      "section_order": 2
+    },
+    {
+      "catalog_code": "103",
+      "section_name": "Segment to segment flash (radial flash)",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 2,
+      "rows": [
+        {
+          "description": "Thickness of flash < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "103.1",
+          "source_page": 2
+        },
+        {
+          "description": "Height of flash < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "103.2",
+          "source_page": 2
+        },
+        {
+          "description": "Height of flash between 0.5 mm and 1 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "103.3",
+          "source_page": 2
+        },
+        {
+          "description": "Height of flash between 1 mm and 15 mm",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 4,
+          "condition_code": "103.4",
+          "source_page": 2
+        },
+        {
+          "description": "More than above *all flash that seals off a grove must be cut",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "103.5",
+          "source_page": 2
+        }
+      ],
+      "section_order": 3
+    },
+    {
+      "catalog_code": "104",
+      "section_name": "Two piece mold circumferential flash",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 3,
+      "rows": [
+        {
+          "description": "Thickness of flash < 1 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "104.1",
+          "source_page": 3
+        },
+        {
+          "description": "Height of flash < 2 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "104.2",
+          "source_page": 3
+        },
+        {
+          "description": "Height of flash between 2 and 5 mm",
+          "action_code": "2",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "104.3",
+          "source_page": 3
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "104.4",
+          "source_page": 3
+        }
+      ],
+      "section_order": 4
+    },
+    {
+      "catalog_code": "105",
+      "section_name": "Missing sipes in tread block",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 3,
+      "rows": [
+        {
+          "description": "Missing sipes max. 4 (extra rubber / no groove)",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "105.1",
+          "source_page": 3
+        },
+        {
+          "description": "Any successive sipes missing",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "105.2",
+          "source_page": 3
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "105.3",
+          "source_page": 3
+        }
+      ],
+      "section_order": 5
+    },
+    {
+      "catalog_code": "106",
+      "section_name": "Tread ID line imperfections",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 3,
+      "rows": [
+        {
+          "description": "Straight ID line over tread blocks",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "106.1",
+          "source_page": 3
+        },
+        {
+          "description": "Straight ID line in design groove or groove with TWI",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "106.2",
+          "source_page": 3
+        },
+        {
+          "description": "Waviness of ID line < 5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "106.3",
+          "source_page": 3
+        },
+        {
+          "description": "Waviness of ID line < 10 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 4,
+          "condition_code": "106.4",
+          "source_page": 3
+        },
+        {
+          "description": "Waviness of ID line, more than 10mm",
+          "action_code": "3",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 5,
+          "condition_code": "106.5",
+          "source_page": 3
+        },
+        {
+          "description": "ID line up to 1/4 of circumference missing",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 6,
+          "condition_code": "106.6",
+          "source_page": 3
+        },
+        {
+          "description": "ID line more than 1/4 of circumference missing",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 7,
+          "condition_code": "106.7",
+          "source_page": 3
+        },
+        {
+          "description": "Staining up to 3 mm in diameter on up to 2 locations",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 8,
+          "condition_code": "106.8",
+          "source_page": 3
+        },
+        {
+          "description": "Staining more than above",
+          "action_code": "3",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 9,
+          "condition_code": "106.9",
+          "source_page": 3
+        }
+      ],
+      "section_order": 6
+    },
+    {
+      "catalog_code": "107",
+      "section_name": "Cord visible on tread",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 4,
+      "rows": [
+        {
+          "description": "Cords can be felt but are not visible",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "107.1",
+          "source_page": 4
+        },
+        {
+          "description": "Cord visible (rubberized or not)",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "107.2",
+          "source_page": 4
+        }
+      ],
+      "section_order": 7
+    },
+    {
+      "catalog_code": "108",
+      "section_name": "Tread splice imperfections",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 4,
+      "rows": [
+        {
+          "description": "Area of imperfection < 10 x 5 mm",
+          "action_code": "4,6",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "108.1",
+          "source_page": 4
+        },
+        {
+          "description": "Depth of imperfection < 5 mm",
+          "action_code": "4,6",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "108.2",
+          "source_page": 4
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "108.3",
+          "source_page": 4
+        }
+      ],
+      "section_order": 8
+    },
+    {
+      "catalog_code": "109",
+      "section_name": "Tread Chipping",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 4,
+      "rows": [
+        {
+          "description": "Length of imperfection < 3 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "109.1",
+          "source_page": 4
+        },
+        {
+          "description": "Depth of imperfection < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "109.2",
+          "source_page": 4
+        },
+        {
+          "description": "Number of imperfection max. 4",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "109.3",
+          "source_page": 4
+        },
+        {
+          "description": "Length of imperfection < 6 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "109.4",
+          "source_page": 4
+        },
+        {
+          "description": "Depth of imperfection < 2 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "109.5",
+          "source_page": 4
+        },
+        {
+          "description": "Number of imperfection max. 8",
+          "action_code": "1",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 6,
+          "condition_code": "109.6",
+          "source_page": 4
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 7,
+          "condition_code": "109.7",
+          "source_page": 4
+        }
+      ],
+      "section_order": 9
+    },
+    {
+      "catalog_code": "110",
+      "section_name": "Trimming imperfections",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 5,
+      "rows": [
+        {
+          "description": "Height of all tread and shoulder ventings < 2 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "110.1",
+          "source_page": 5
+        },
+        {
+          "description": "Number of tread and shoulder ventings with height between 2",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "110.2",
+          "source_page": 5
+        },
+        {
+          "description": "and 3 mm max. 5",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "110.3",
+          "source_page": 5
+        },
+        {
+          "description": "Height of any tread or shoulder venting > 3 mm",
+          "action_code": "2",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 4,
+          "condition_code": "110.4",
+          "source_page": 5
+        },
+        {
+          "description": "Depth of imperfections due to trimming < 0.5 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 5,
+          "condition_code": "110.5",
+          "source_page": 5
+        },
+        {
+          "description": "Width of imperfections due to trimming < 5 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 6,
+          "condition_code": "110.6",
+          "source_page": 5
+        },
+        {
+          "description": "Number of imperfections due to trimming max. 3",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 7,
+          "condition_code": "110.7",
+          "source_page": 5
+        },
+        {
+          "description": "Missing spring or micro venting insert",
+          "action_code": "2",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 8,
+          "condition_code": "110.8",
+          "source_page": 5
+        },
+        {
+          "description": "Edge of tread block damaged due to trimming",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 9,
+          "condition_code": "110.9",
+          "source_page": 5
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 10,
+          "condition_code": "110.10",
+          "source_page": 5
+        }
+      ],
+      "section_order": 10
+    },
+    {
+      "catalog_code": "111",
+      "section_name": "Single belt",
+      "side": "tread",
+      "critical_characteristic": true,
+      "source_page": 5,
+      "rows": [
+        {
+          "description": "If single belt appears (Tyre is lighter and has less resistance when pushed on the",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "111.1",
+          "source_page": 5
+        },
+        {
+          "description": "tread in relation to a correct one)",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "111.2",
+          "source_page": 5
+        }
+      ],
+      "section_order": 11
+    },
+    {
+      "catalog_code": "112",
+      "section_name": "Parallel Belt",
+      "side": "tread",
+      "critical_characteristic": true,
+      "source_page": 5,
+      "rows": [
+        {
+          "description": "If parallel belt appears (Tyre looks flatter and has less resistance when pushed on the",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "112.1",
+          "source_page": 5
+        },
+        {
+          "description": "tread in relation to a correct one)",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "112.2",
+          "source_page": 5
+        }
+      ],
+      "section_order": 12
+    },
+    {
+      "catalog_code": "113",
+      "section_name": "Segment to segment radial step off",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 6,
+      "rows": [
+        {
+          "description": "Radial step off > 0 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "113.1",
+          "source_page": 6
+        }
+      ],
+      "section_order": 13
+    },
+    {
+      "catalog_code": "114",
+      "section_name": "Segment to segment lateral step off",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 6,
+      "rows": [
+        {
+          "description": "Lateral step off < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "114.1",
+          "source_page": 6
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "114.2",
+          "source_page": 6
+        }
+      ],
+      "section_order": 14
+    },
+    {
+      "catalog_code": "115",
+      "section_name": "Mold step off in two piece mold",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 6,
+      "rows": [
+        {
+          "description": "Step off < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "115.1",
+          "source_page": 6
+        },
+        {
+          "description": "Step off between 0.5 and 1 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "115.2",
+          "source_page": 6
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "115.3",
+          "source_page": 6
+        }
+      ],
+      "section_order": 15
+    },
+    {
+      "catalog_code": "116",
+      "section_name": "Package off",
+      "side": "tread",
+      "critical_characteristic": false,
+      "source_page": 6,
+      "rows": [
+        {
+          "description": "Section package off up to 1/2 circumferential",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "116.1",
+          "source_page": 6
+        },
+        {
+          "description": "If package off appears",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "116.2",
+          "source_page": 6
+        }
+      ],
+      "section_order": 16
+    },
+    {
+      "catalog_code": "201",
+      "section_name": "Shoulder blister",
+      "side": "shoulder",
+      "critical_characteristic": false,
+      "source_page": 7,
+      "rows": [
+        {
+          "description": "SOT construction: Location of complete blister <10mm from shoulder splice",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "201.1",
+          "source_page": 7
+        },
+        {
+          "description": "SOT construction: Diameter of blister < 5 mm",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "201.2",
+          "source_page": 7
+        },
+        {
+          "description": "SOT construction: If depth after rework < 1 mm",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "201.3",
+          "source_page": 7
+        },
+        {
+          "description": "SOT construction: More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "201.4",
+          "source_page": 7
+        },
+        {
+          "description": "If shoulder blister appears",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "201.5",
+          "source_page": 7
+        }
+      ],
+      "section_order": 17
+    },
+    {
+      "catalog_code": "202",
+      "section_name": "Shoulder lightness/ crack",
+      "side": "shoulder",
+      "critical_characteristic": false,
+      "source_page": 7,
+      "rows": [
+        {
+          "description": "Depth of imperfection < 0.5 mm",
+          "action_code": "3,4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "202.1",
+          "source_page": 7
+        },
+        {
+          "description": "Separation between two layers",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "202.2",
+          "source_page": 7
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "202.3",
+          "source_page": 7
+        }
+      ],
+      "section_order": 18
+    },
+    {
+      "catalog_code": "203",
+      "section_name": "Segment to SW flash (circumferential flash)",
+      "side": "shoulder",
+      "critical_characteristic": false,
+      "source_page": 7,
+      "rows": [
+        {
+          "description": "Thickness of flash < 1 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "203.1",
+          "source_page": 7
+        },
+        {
+          "description": "Height < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "203.2",
+          "source_page": 7
+        },
+        {
+          "description": "Height between 0.5 mm and 10 mm",
+          "action_code": "2",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "203.3",
+          "source_page": 7
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "203.4",
+          "source_page": 7
+        }
+      ],
+      "section_order": 19
+    },
+    {
+      "catalog_code": "204",
+      "section_name": "Shoulder step off",
+      "side": "shoulder",
+      "critical_characteristic": false,
+      "source_page": 8,
+      "rows": [
+        {
+          "description": "Sectional width < 185 mm: step off < 1 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "204.1",
+          "source_page": 8
+        },
+        {
+          "description": "Sectional width 185mm and above: step off < 1.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "204.2",
+          "source_page": 8
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "204.3",
+          "source_page": 8
+        }
+      ],
+      "section_order": 20
+    },
+    {
+      "catalog_code": "207",
+      "section_name": "Loose cord through shoulder",
+      "side": "shoulder",
+      "critical_characteristic": false,
+      "source_page": 8,
+      "rows": [
+        {
+          "description": "Loose cord (nylon or steel) through shoulder",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "207.1",
+          "source_page": 8
+        }
+      ],
+      "section_order": 21
+    },
+    {
+      "catalog_code": "301",
+      "section_name": "Sidewall blister",
+      "side": "sidewall",
+      "critical_characteristic": false,
+      "source_page": 8,
+      "rows": [
+        {
+          "description": "Diameter of imperfection < 5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "301.1",
+          "source_page": 8
+        },
+        {
+          "description": "Height of imperfection < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "301.2",
+          "source_page": 8
+        },
+        {
+          "description": "Number of imperfections per side max. 1",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "301.3",
+          "source_page": 8
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "301.4",
+          "source_page": 8
+        }
+      ],
+      "section_order": 22
+    },
+    {
+      "catalog_code": "302",
+      "section_name": "Sidewall lightness",
+      "side": "sidewall",
+      "critical_characteristic": false,
+      "source_page": 8,
+      "rows": [
+        {
+          "description": "If faint shiny appearance with no depth",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "302.1",
+          "source_page": 8
+        },
+        {
+          "description": "Depth of imperfection < 0.5 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "302.2",
+          "source_page": 8
+        },
+        {
+          "description": "Number of imperfections per side max. 2",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "302.3",
+          "source_page": 8
+        },
+        {
+          "description": "Depth of imperfection between 0.5 and 1 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "302.4",
+          "source_page": 8
+        },
+        {
+          "description": "If legal engraving in missing",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "302.5",
+          "source_page": 8
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 6,
+          "condition_code": "302.6",
+          "source_page": 8
+        }
+      ],
+      "section_order": 23
+    },
+    {
+      "catalog_code": "303",
+      "section_name": "Insert flash",
+      "side": "sidewall",
+      "critical_characteristic": false,
+      "source_page": 9,
+      "rows": [
+        {
+          "description": "Flash thickness < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "303.1",
+          "source_page": 9
+        },
+        {
+          "description": "Flash height < 1 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "303.2",
+          "source_page": 9
+        },
+        {
+          "description": "More than above",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "303.3",
+          "source_page": 9
+        }
+      ],
+      "section_order": 24
+    },
+    {
+      "catalog_code": "304",
+      "section_name": "Insert misalignment",
+      "side": "sidewall",
+      "critical_characteristic": false,
+      "source_page": 9,
+      "rows": [
+        {
+          "description": "Misalignment < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "304.1",
+          "source_page": 9
+        },
+        {
+          "description": "Misalignment between 0.5 and 2 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "304.2",
+          "source_page": 9
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "304.3",
+          "source_page": 9
+        }
+      ],
+      "section_order": 25
+    },
+    {
+      "catalog_code": "305",
+      "section_name": "Wrong insert",
+      "side": "sidewall",
+      "critical_characteristic": false,
+      "source_page": 9,
+      "rows": [
+        {
+          "description": "Blank or incorrect insert",
+          "action_code": "4,7",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "305.1",
+          "source_page": 9
+        }
+      ],
+      "section_order": 26
+    },
+    {
+      "catalog_code": "306",
+      "section_name": "Missing insert",
+      "side": "sidewall",
+      "critical_characteristic": false,
+      "source_page": 9,
+      "rows": [
+        {
+          "description": "No insert in the cavity",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "306.1",
+          "source_page": 9
+        }
+      ],
+      "section_order": 27
+    },
+    {
+      "catalog_code": "308",
+      "section_name": "Sidewall splice imperfections",
+      "side": "sidewall",
+      "critical_characteristic": true,
+      "source_page": 10,
+      "rows": [
+        {
+          "description": "Length of imperfection < 5 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "308.1",
+          "source_page": 10
+        },
+        {
+          "description": "Depth of imperfection < 0.5 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "308.2",
+          "source_page": 10
+        },
+        {
+          "description": "If legal engraving in missing",
+          "action_code": "7",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "308.3",
+          "source_page": 10
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "308.4",
+          "source_page": 10
+        }
+      ],
+      "section_order": 28
+    },
+    {
+      "catalog_code": "309",
+      "section_name": "Pitted/ rough side wall",
+      "side": "sidewall",
+      "critical_characteristic": false,
+      "source_page": 10,
+      "rows": [
+        {
+          "description": "Surface of imperfection < 0.5 mm raised/depressed",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "309.1",
+          "source_page": 10
+        },
+        {
+          "description": "Max. area of imperfections 25 x 25 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "309.2",
+          "source_page": 10
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "309.3",
+          "source_page": 10
+        }
+      ],
+      "section_order": 29
+    },
+    {
+      "catalog_code": "401",
+      "section_name": "Bead blister",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 10,
+      "rows": [
+        {
+          "description": "Blister diameter < 4 mm",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "401.1",
+          "source_page": 10
+        },
+        {
+          "description": "Blister height max. 2 mm",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "401.2",
+          "source_page": 10
+        },
+        {
+          "description": "Number of blister per bead < 5",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "401.3",
+          "source_page": 10
+        },
+        {
+          "description": "Blister diameter < 8 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "401.4",
+          "source_page": 10
+        },
+        {
+          "description": "Blister height max. 3 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "401.5",
+          "source_page": 10
+        },
+        {
+          "description": "Number of blister per bead < 8",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 6,
+          "condition_code": "401.6",
+          "source_page": 10
+        },
+        {
+          "description": "Blister depth all the way to the ply cords",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 7,
+          "condition_code": "401.7",
+          "source_page": 10
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 8,
+          "condition_code": "401.8",
+          "source_page": 10
+        }
+      ],
+      "section_order": 30
+    },
+    {
+      "catalog_code": "402",
+      "section_name": "Bead/ rim lightness",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 11,
+      "rows": [
+        {
+          "description": "Length of imperfection < 10 mm",
+          "action_code": "3,4",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "402.1",
+          "source_page": 11
+        },
+        {
+          "description": "Depth of imperfection < 1 mm",
+          "action_code": "3,4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "402.2",
+          "source_page": 11
+        },
+        {
+          "description": "Depth of imperfection < 2 mm",
+          "action_code": "3,4",
+          "oe": false,
+          "replacement": false,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "402.3",
+          "source_page": 11
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "402.4",
+          "source_page": 11
+        }
+      ],
+      "section_order": 31
+    },
+    {
+      "catalog_code": "403",
+      "section_name": "Mould and bead ring parting line flash",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 11,
+      "rows": [
+        {
+          "description": "Flash thickness < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "403.1",
+          "source_page": 11
+        },
+        {
+          "description": "Flash height < 1 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "403.2",
+          "source_page": 11
+        },
+        {
+          "description": "More than above",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "403.3",
+          "source_page": 11
+        }
+      ],
+      "section_order": 32
+    },
+    {
+      "catalog_code": "404",
+      "section_name": "Pinched bead/ toe flash",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 11,
+      "rows": [
+        {
+          "description": "Height of bead flash < 1 mm (bladder groove excluded)",
+          "action_code": "1",
+          "oe": true,
+          "replacement": false,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "404.1",
+          "source_page": 11
+        },
+        {
+          "description": "Height of bead flash < 5 mm",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "404.2",
+          "source_page": 11
+        },
+        {
+          "description": "Height of bead flash < 10 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "404.3",
+          "source_page": 11
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "404.4",
+          "source_page": 11
+        }
+      ],
+      "section_order": 33
+    },
+    {
+      "catalog_code": "405",
+      "section_name": "Hollow Bead Imperfection",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 12,
+      "rows": [
+        {
+          "description": "Hollow (Concave surface / Indentation / Depression) at bead",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "405.1",
+          "source_page": 12
+        },
+        {
+          "description": "on inner liner side (near bead toe) at particular location or in full circumfrence Cured Tyre Inner",
+          "action_code": "1",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "405.2",
+          "source_page": 12
+        }
+      ],
+      "section_order": 34
+    },
+    {
+      "catalog_code": "406",
+      "section_name": "Bent bead",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 12,
+      "rows": [
+        {
+          "description": "Deformation < 2 mm",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "406.1",
+          "source_page": 12
+        },
+        {
+          "description": "Maximal number of bents per 2 per bead",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "406.2",
+          "source_page": 12
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "406.3",
+          "source_page": 12
+        }
+      ],
+      "section_order": 35
+    },
+    {
+      "catalog_code": "407",
+      "section_name": "Bare cord in bead / bead cord visible",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 12,
+      "rows": [
+        {
+          "description": "Cords can be felt but are not visible",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "407.1",
+          "source_page": 12
+        },
+        {
+          "description": "Cords visible (rubberized or not)",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "407.2",
+          "source_page": 12
+        }
+      ],
+      "section_order": 36
+    },
+    {
+      "catalog_code": "408",
+      "section_name": "Toe crack / bead crack",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 12,
+      "rows": [
+        {
+          "description": "Length of imperfection < 100 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "408.1",
+          "source_page": 12
+        },
+        {
+          "description": "Decrease in taper width < 2 mm",
+          "action_code": "2",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "408.2",
+          "source_page": 12
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "408.3",
+          "source_page": 12
+        }
+      ],
+      "section_order": 37
+    },
+    {
+      "catalog_code": "409",
+      "section_name": "Dent and pimple in bead ring",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 13,
+      "rows": [
+        {
+          "description": "Size of imperfections < 5 x 5 x 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "409.1",
+          "source_page": 13
+        },
+        {
+          "description": "up to 3 imperfections",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "409.2",
+          "source_page": 13
+        },
+        {
+          "description": "4 or 5 imperfections",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "409.3",
+          "source_page": 13
+        },
+        {
+          "description": "Number or size more than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "409.4",
+          "source_page": 13
+        }
+      ],
+      "section_order": 38
+    },
+    {
+      "catalog_code": "410",
+      "section_name": "Bead step off",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 13,
+      "rows": [
+        {
+          "description": "Step off < 1 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "410.1",
+          "source_page": 13
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "410.2",
+          "source_page": 13
+        }
+      ],
+      "section_order": 39
+    },
+    {
+      "catalog_code": "411",
+      "section_name": "Trapped bead/ Loaded on bladder",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 13,
+      "rows": [
+        {
+          "description": "In all cases",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "411.1",
+          "source_page": 13
+        }
+      ],
+      "section_order": 40
+    },
+    {
+      "catalog_code": "412",
+      "section_name": "Barcode imperfections",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 13,
+      "rows": [
+        {
+          "description": "Barcode is placed between taper and rim line",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "412.1",
+          "source_page": 13
+        },
+        {
+          "description": "Length of material flow over barcode < 2 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "412.2",
+          "source_page": 13
+        },
+        {
+          "description": "Angle misplacement < 15 degrees",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "412.3",
+          "source_page": 13
+        },
+        {
+          "description": "Folded barcode",
+          "action_code": "8",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 4,
+          "condition_code": "412.4",
+          "source_page": 13
+        },
+        {
+          "description": "More than above",
+          "action_code": "8",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 5,
+          "condition_code": "412.5",
+          "source_page": 13
+        }
+      ],
+      "section_order": 41
+    },
+    {
+      "catalog_code": "414",
+      "section_name": "Narrow Bead",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 14,
+      "rows": [
+        {
+          "description": "Difference in width of SS & NSS bead (Heel to Toe) < 2mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "414.1",
+          "source_page": 14
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "414.2",
+          "source_page": 14
+        }
+      ],
+      "section_order": 42
+    },
+    {
+      "catalog_code": "415",
+      "section_name": "Round Bead",
+      "side": "bead",
+      "critical_characteristic": false,
+      "source_page": 14,
+      "rows": [
+        {
+          "description": "Rounding of bead toe < 2 mm, no exposer / damage of cord",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "415.1",
+          "source_page": 14
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "415.2",
+          "source_page": 14
+        }
+      ],
+      "section_order": 43
+    },
+    {
+      "catalog_code": "501",
+      "section_name": "Inner liner blister",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 14,
+      "rows": [
+        {
+          "description": "Zone B: Diameter of blister < 3 mm, height < 2 mm and number",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "501.1",
+          "source_page": 14
+        },
+        {
+          "description": "of blisters maximum 3 (All three conditions must be true) Zone B & A: Diameter of blister > 3 mm and < 15 mm or number",
+          "action_code": "5",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "501.2",
+          "source_page": 14
+        },
+        {
+          "description": "of blisters > 3 and < 6 Zone B & A: Diameter of blister > 15 mm or number of blisters > 6 Zone A B Zone B",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "501.3",
+          "source_page": 14
+        }
+      ],
+      "section_order": 44
+    },
+    {
+      "catalog_code": "502",
+      "section_name": "Ply blister, shoulder and tread area",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 14,
+      "rows": [
+        {
+          "description": "In all cases",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "502.1",
+          "source_page": 14
+        }
+      ],
+      "section_order": 45
+    },
+    {
+      "catalog_code": "503",
+      "section_name": "Ply blister, shoulder and tread area",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 15,
+      "rows": [
+        {
+          "description": "In all cases",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "503.1",
+          "source_page": 15
+        }
+      ],
+      "section_order": 46
+    },
+    {
+      "catalog_code": "504",
+      "section_name": "Ply blister, shoulder and tread area",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 15,
+      "rows": [
+        {
+          "description": "In all cases",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "504.1",
+          "source_page": 15
+        }
+      ],
+      "section_order": 47
+    },
+    {
+      "catalog_code": "505",
+      "section_name": "Air bridging problem/ bladder not touch",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 15,
+      "rows": [
+        {
+          "description": "Shiny appearance on top of bladder ribs",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "505.1",
+          "source_page": 15
+        },
+        {
+          "description": "Depth of imperfection <bladder profile",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "505.2",
+          "source_page": 15
+        },
+        {
+          "description": "More than above",
+          "action_code": "10",
+          "oe": false,
+          "replacement": true,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "505.3",
+          "source_page": 15
+        }
+      ],
+      "section_order": 48
+    },
+    {
+      "catalog_code": "506",
+      "section_name": "Bladder leak",
+      "side": "innerliner",
+      "critical_characteristic": true,
+      "source_page": 15,
+      "rows": [
+        {
+          "description": "In all cases",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "506.1",
+          "source_page": 15
+        }
+      ],
+      "section_order": 49
+    },
+    {
+      "catalog_code": "507",
+      "section_name": "Cord visible through inner liner",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 16,
+      "rows": [
+        {
+          "description": "Cord visible (rubberized or not)",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "507.1",
+          "source_page": 16
+        },
+        {
+          "description": "Section analysis: > 0.55 mm inner liner over cords",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "507.2",
+          "source_page": 16
+        }
+      ],
+      "section_order": 50
+    },
+    {
+      "catalog_code": "508",
+      "section_name": "Inner liner splice imperfections",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 16,
+      "rows": [
+        {
+          "description": "Overlap splice < 10 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "508.1",
+          "source_page": 16
+        },
+        {
+          "description": "Overlap splice < 30 mm",
+          "action_code": "6",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "508.2",
+          "source_page": 16
+        },
+        {
+          "description": "Hair line crack < 0.5 mm wide",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "508.3",
+          "source_page": 16
+        },
+        {
+          "description": "Open inner liner splice",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "508.4",
+          "source_page": 16
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "508.5",
+          "source_page": 16
+        }
+      ],
+      "section_order": 51
+    },
+    {
+      "catalog_code": "509",
+      "section_name": "Inner liner imperfections",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 16,
+      "rows": [
+        {
+          "description": "Size of imperfection < 20 x 20 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "509.1",
+          "source_page": 16
+        },
+        {
+          "description": "Number of imperfections max. 3",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "509.2",
+          "source_page": 16
+        },
+        {
+          "description": "Peel off (inner liner stuck to bladder)",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "509.3",
+          "source_page": 16
+        },
+        {
+          "description": "Section analysis: > 0.55 mm inner liner over cords",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 4,
+          "condition_code": "509.4",
+          "source_page": 16
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "509.5",
+          "source_page": 16
+        },
+        {
+          "description": "Inner liner delamination",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 6,
+          "condition_code": "509.6",
+          "source_page": 16
+        }
+      ],
+      "section_order": 52
+    },
+    {
+      "catalog_code": "510",
+      "section_name": "Inner liner crack",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 16,
+      "rows": [
+        {
+          "description": "In all cases",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "510.1",
+          "source_page": 16
+        }
+      ],
+      "section_order": 53
+    },
+    {
+      "catalog_code": "512",
+      "section_name": "Ply splice imperfections",
+      "side": "innerliner",
+      "critical_characteristic": true,
+      "source_page": 17,
+      "rows": [
+        {
+          "description": "Overlap splice < 10 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "512.1",
+          "source_page": 17
+        },
+        {
+          "description": "Overlap splice < 20 mm",
+          "action_code": "6",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "512.2",
+          "source_page": 17
+        },
+        {
+          "description": "Missing cord",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "512.3",
+          "source_page": 17
+        },
+        {
+          "description": "Open ply splice",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "512.4",
+          "source_page": 17
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "512.5",
+          "source_page": 17
+        }
+      ],
+      "section_order": 54
+    },
+    {
+      "catalog_code": "513",
+      "section_name": "Ply split/ split fabric",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 17,
+      "rows": [
+        {
+          "description": "Depth of imperfection <bladder profile",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "513.1",
+          "source_page": 17
+        },
+        {
+          "description": "Depth of imperfection in flat surface < 0.2 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "513.2",
+          "source_page": 17
+        },
+        {
+          "description": "More than above or cord visible",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "513.3",
+          "source_page": 17
+        }
+      ],
+      "section_order": 55
+    },
+    {
+      "catalog_code": "514",
+      "section_name": "Chafer splice imperfections",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 17,
+      "rows": [
+        {
+          "description": "Chafer splice hump < 6 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "514.1",
+          "source_page": 17
+        },
+        {
+          "description": "Chafer splice hump in bead sitting area",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "514.2",
+          "source_page": 17
+        },
+        {
+          "description": "Chafer splice is open",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "514.3",
+          "source_page": 17
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "514.4",
+          "source_page": 17
+        }
+      ],
+      "section_order": 56
+    },
+    {
+      "catalog_code": "515",
+      "section_name": "Cap ply splice imperfections",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 17,
+      "rows": [
+        {
+          "description": "Cap ply splice < 25 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "515.1",
+          "source_page": 17
+        },
+        {
+          "description": "Cap ply splice < 35 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "515.2",
+          "source_page": 17
+        },
+        {
+          "description": "Open cap ply splice",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "515.3",
+          "source_page": 17
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "515.4",
+          "source_page": 17
+        }
+      ],
+      "section_order": 57
+    },
+    {
+      "catalog_code": "516",
+      "section_name": "Belt imperfections",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 18,
+      "rows": [
+        {
+          "description": "Width of diagonal imperfection < 2 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "516.1",
+          "source_page": 18
+        },
+        {
+          "description": "More than above",
+          "action_code": "6",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "516.2",
+          "source_page": 18
+        },
+        {
+          "description": "Loose cord",
+          "action_code": "6",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "516.3",
+          "source_page": 18
+        }
+      ],
+      "section_order": 58
+    },
+    {
+      "catalog_code": "517",
+      "section_name": "Bladder fold",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 18,
+      "rows": [
+        {
+          "description": "In all cases",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "517.1",
+          "source_page": 18
+        }
+      ],
+      "section_order": 59
+    },
+    {
+      "catalog_code": "518",
+      "section_name": "Material fold (cap ply/ cap strip/ ply/ inner liner)",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 18,
+      "rows": [
+        {
+          "description": "Width of bump < 10 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "518.1",
+          "source_page": 18
+        },
+        {
+          "description": "Height of bump < 0.5 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "518.2",
+          "source_page": 18
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "518.3",
+          "source_page": 18
+        }
+      ],
+      "section_order": 60
+    },
+    {
+      "catalog_code": "519",
+      "section_name": "Reverse hump",
+      "side": "innerliner",
+      "critical_characteristic": false,
+      "source_page": 18,
+      "rows": [
+        {
+          "description": "Width of hump < 10 mm",
+          "action_code": "1",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "519.1",
+          "source_page": 18
+        },
+        {
+          "description": "Width of hump < 15 mm",
+          "action_code": "6",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "519.2",
+          "source_page": 18
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "519.3",
+          "source_page": 18
+        }
+      ],
+      "section_order": 61
+    },
+    {
+      "catalog_code": "601",
+      "section_name": "Double moulding",
+      "side": "curing",
+      "critical_characteristic": false,
+      "source_page": 19,
+      "rows": [
+        {
+          "description": "In all cases",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "601.1",
+          "source_page": 19
+        }
+      ],
+      "section_order": 62
+    },
+    {
+      "catalog_code": "602",
+      "section_name": "Damaged tyre during curing cycle",
+      "side": "curing",
+      "critical_characteristic": false,
+      "source_page": 19,
+      "rows": [
+        {
+          "description": "If a damaged tyre appears",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "602.1",
+          "source_page": 19
+        }
+      ],
+      "section_order": 63
+    },
+    {
+      "catalog_code": "603",
+      "section_name": "Damaged tyre during dry cycle",
+      "side": "curing",
+      "critical_characteristic": false,
+      "source_page": 19,
+      "rows": [
+        {
+          "description": "If a damaged tyre appears",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "603.1",
+          "source_page": 19
+        }
+      ],
+      "section_order": 64
+    },
+    {
+      "catalog_code": "604",
+      "section_name": "Press late open",
+      "side": "curing",
+      "critical_characteristic": false,
+      "source_page": 19,
+      "rows": [
+        {
+          "description": "Extension of cycle time < 3 minutes",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "604.1",
+          "source_page": 19
+        },
+        {
+          "description": "More than above *indicated by production or logging system",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "604.2",
+          "source_page": 19
+        }
+      ],
+      "section_order": 65
+    },
+    {
+      "catalog_code": "605",
+      "section_name": "Visible under cure",
+      "side": "curing",
+      "critical_characteristic": true,
+      "source_page": 20,
+      "rows": [
+        {
+          "description": "In all cases",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "605.1",
+          "source_page": 20
+        }
+      ],
+      "section_order": 66
+    },
+    {
+      "catalog_code": "606",
+      "section_name": "Curing irregularities related to the curing equipment",
+      "side": "curing",
+      "critical_characteristic": false,
+      "source_page": 20,
+      "rows": [
+        {
+          "description": "If curing irregularities appear",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "606.1",
+          "source_page": 20
+        }
+      ],
+      "section_order": 67
+    },
+    {
+      "catalog_code": "607",
+      "section_name": "Wrong moulding",
+      "side": "curing",
+      "critical_characteristic": true,
+      "source_page": 20,
+      "rows": [
+        {
+          "description": "If wrong greentyre/ mould combination appears",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "607.1",
+          "source_page": 20
+        }
+      ],
+      "section_order": 68
+    },
+    {
+      "catalog_code": "608",
+      "section_name": "Asymmetrical tyre cured upside down",
+      "side": "curing",
+      "critical_characteristic": false,
+      "source_page": 20,
+      "rows": [
+        {
+          "description": "Non- W-,Y-tyre",
+          "action_code": "6",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "608.1",
+          "source_page": 20
+        },
+        {
+          "description": "W-, or Y-tyre",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 2,
+          "condition_code": "608.2",
+          "source_page": 20
+        }
+      ],
+      "section_order": 69
+    },
+    {
+      "catalog_code": "609",
+      "section_name": "Tyre waviness",
+      "side": "curing",
+      "critical_characteristic": false,
+      "source_page": 21,
+      "rows": [
+        {
+          "description": "If tyre waviness appears",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "609.1",
+          "source_page": 21
+        }
+      ],
+      "section_order": 70
+    },
+    {
+      "catalog_code": "610",
+      "section_name": "Off standard green tyre",
+      "side": "curing",
+      "critical_characteristic": false,
+      "source_page": 21,
+      "rows": [
+        {
+          "description": "If off standard greentyre appears",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 1,
+          "condition_code": "610.1",
+          "source_page": 21
+        },
+        {
+          "description": "For instance: missing or incorrect component",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "610.2",
+          "source_page": 21
+        }
+      ],
+      "section_order": 71
+    },
+    {
+      "catalog_code": "701",
+      "section_name": "Foreign Material - Dirty Mould",
+      "side": "foreign_material",
+      "critical_characteristic": false,
+      "source_page": 21,
+      "rows": [
+        {
+          "description": "Area of imperfection < 10 x 10 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "701.1",
+          "source_page": 21
+        },
+        {
+          "description": "Depth/ or height of imperfection < 0.5 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "701.2",
+          "source_page": 21
+        },
+        {
+          "description": "Depth/ or height of imperfection < 1 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "701.3",
+          "source_page": 21
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "701.4",
+          "source_page": 21
+        }
+      ],
+      "section_order": 72
+    },
+    {
+      "catalog_code": "705",
+      "section_name": "Foreign Material - lubricant",
+      "side": "foreign_material",
+      "critical_characteristic": false,
+      "source_page": 21,
+      "rows": [
+        {
+          "description": "Size of imperfection with no depth < 20 x 20 mm",
+          "action_code": "2,3,4",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "705.1",
+          "source_page": 21
+        },
+        {
+          "description": "Number of imperfections < 5",
+          "action_code": "2,3,4",
+          "oe": true,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "705.2",
+          "source_page": 21
+        },
+        {
+          "description": "Depth of imperfection < 0.5 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "705.3",
+          "source_page": 21
+        },
+        {
+          "description": "Lubricant between layers",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "705.4",
+          "source_page": 21
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "705.5",
+          "source_page": 21
+        }
+      ],
+      "section_order": 73
+    },
+    {
+      "catalog_code": "706",
+      "section_name": "Foreign Material - in the inner liner",
+      "side": "foreign_material",
+      "critical_characteristic": false,
+      "source_page": 22,
+      "rows": [
+        {
+          "description": "Size of imperfection < 20 x 20 x 0.2 mm",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "706.1",
+          "source_page": 22
+        },
+        {
+          "description": "Number of imperfections max. 5",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "706.2",
+          "source_page": 22
+        },
+        {
+          "description": "Location of imperfection under steel belts",
+          "action_code": "1",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 3,
+          "condition_code": "706.3",
+          "source_page": 22
+        },
+        {
+          "description": "Imperfection causing a puncture in the inner liner",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "706.4",
+          "source_page": 22
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "706.5",
+          "source_page": 22
+        }
+      ],
+      "section_order": 74
+    },
+    {
+      "catalog_code": "707",
+      "section_name": "Foreign Material - Recured rubber",
+      "side": "foreign_material",
+      "critical_characteristic": false,
+      "source_page": 22,
+      "rows": [
+        {
+          "description": "Area of imperfection < 10 x 10 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "707.1",
+          "source_page": 22
+        },
+        {
+          "description": "Depth of imperfection < 0.5 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "707.2",
+          "source_page": 22
+        },
+        {
+          "description": "Area of imperfection < 30 x 30 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "707.3",
+          "source_page": 22
+        },
+        {
+          "description": "Depth of imperfection < 2 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "707.4",
+          "source_page": 22
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "707.5",
+          "source_page": 22
+        }
+      ],
+      "section_order": 75
+    },
+    {
+      "catalog_code": "708",
+      "section_name": "Foreign Material - Various",
+      "side": "foreign_material",
+      "critical_characteristic": false,
+      "source_page": 23,
+      "rows": [
+        {
+          "description": "Area of imperfection < 10 x 10 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 1,
+          "condition_code": "708.1",
+          "source_page": 23
+        },
+        {
+          "description": "Depth of imperfection < 0.5 mm",
+          "action_code": "4",
+          "oe": false,
+          "replacement": true,
+          "scrap": false,
+          "row_order": 2,
+          "condition_code": "708.2",
+          "source_page": 23
+        },
+        {
+          "description": "Area of imperfection < 30 x 30 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 3,
+          "condition_code": "708.3",
+          "source_page": 23
+        },
+        {
+          "description": "Depth of imperfection < 2 mm",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 4,
+          "condition_code": "708.4",
+          "source_page": 23
+        },
+        {
+          "description": "More than above",
+          "action_code": "",
+          "oe": false,
+          "replacement": false,
+          "scrap": true,
+          "row_order": 5,
+          "condition_code": "708.5",
+          "source_page": 23
+        }
+      ],
+      "section_order": 76
+    }
+  ],
+  "images": [
+    {
+      "catalog_code": "101",
+      "section_name": "Tread blisters",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 2,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\101\\101_p02_01.png",
+      "bbox": [
+        164.75,
+        399.46,
+        469.02,
+        590.24
+      ]
+    },
+    {
+      "catalog_code": "101",
+      "section_name": "Tread blisters",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 2,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\101\\101_p02_02.png",
+      "bbox": [
+        571.12,
+        400.89,
+        872.54,
+        585.97
+      ]
+    },
+    {
+      "catalog_code": "102",
+      "section_name": "Tread Lightness",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 2,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\102\\102_p02_01.png",
+      "bbox": [
+        166.37,
+        765.97,
+        451.93,
+        962.44
+      ]
+    },
+    {
+      "catalog_code": "102",
+      "section_name": "Tread Lightness",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 2,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\102\\102_p02_02.png",
+      "bbox": [
+        553.83,
+        768.0,
+        835.52,
+        961.63
+      ]
+    },
+    {
+      "catalog_code": "103",
+      "section_name": "Segment to segment flash (radial flash)",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 2,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\103\\103_p02_01.png",
+      "bbox": [
+        182.03,
+        1134.72,
+        433.01,
+        1318.38
+      ]
+    },
+    {
+      "catalog_code": "103",
+      "section_name": "Segment to segment flash (radial flash)",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 2,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\103\\103_p02_02.png",
+      "bbox": [
+        578.24,
+        1133.29,
+        846.51,
+        1317.56
+      ]
+    },
+    {
+      "catalog_code": "106",
+      "section_name": "Tread ID line imperfections",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 3,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\106\\106_p03_01.png",
+      "bbox": [
+        169.42,
+        1106.24,
+        464.34,
+        1305.56
+      ]
+    },
+    {
+      "catalog_code": "104",
+      "section_name": "Two piece mold circumferential flash",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 3,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\104\\104_p03_01.png",
+      "bbox": [
+        166.37,
+        385.83,
+        433.83,
+        576.0
+      ]
+    },
+    {
+      "catalog_code": "104",
+      "section_name": "Two piece mold circumferential flash",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 3,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\104\\104_p03_02.png",
+      "bbox": [
+        535.93,
+        386.65,
+        806.64,
+        571.73
+      ]
+    },
+    {
+      "catalog_code": "105",
+      "section_name": "Missing sipes in tread block",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 3,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\105\\105_p03_01.png",
+      "bbox": [
+        166.37,
+        675.66,
+        436.06,
+        867.05
+      ]
+    },
+    {
+      "catalog_code": "105",
+      "section_name": "Missing sipes in tread block",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 3,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\105\\105_p03_02.png",
+      "bbox": [
+        534.3,
+        676.28,
+        808.06,
+        864.21
+      ]
+    },
+    {
+      "catalog_code": "106",
+      "section_name": "Tread ID line imperfections",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 3,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\106\\106_p03_02.png",
+      "bbox": [
+        561.76,
+        1105.43,
+        817.62,
+        1313.29
+      ]
+    },
+    {
+      "catalog_code": "109",
+      "section_name": "Tread Chipping",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 4,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\109\\109_p04_01.png",
+      "bbox": [
+        166.37,
+        1094.65,
+        466.78,
+        1281.16
+      ]
+    },
+    {
+      "catalog_code": "109",
+      "section_name": "Tread Chipping",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 4,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\109\\109_p04_02.png",
+      "bbox": [
+        549.97,
+        1097.49,
+        865.43,
+        1284.0
+      ]
+    },
+    {
+      "catalog_code": "108",
+      "section_name": "Tread splice imperfections",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 4,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\108\\108_p04_01.png",
+      "bbox": [
+        167.8,
+        687.46,
+        450.31,
+        888.21
+      ]
+    },
+    {
+      "catalog_code": "107",
+      "section_name": "Cord visible on tread",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 4,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\107\\107_p04_01.png",
+      "bbox": [
+        166.37,
+        388.28,
+        447.05,
+        583.94
+      ]
+    },
+    {
+      "catalog_code": "107",
+      "section_name": "Cord visible on tread",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 4,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\107\\107_p04_02.png",
+      "bbox": [
+        531.05,
+        393.16,
+        812.74,
+        584.75
+      ]
+    },
+    {
+      "catalog_code": "108",
+      "section_name": "Tread splice imperfections",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 4,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\108\\108_p04_02.png",
+      "bbox": [
+        570.3,
+        681.15,
+        884.13,
+        894.51
+      ]
+    },
+    {
+      "catalog_code": "110",
+      "section_name": "Trimming imperfections",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 5,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\110\\110_p05_01.png",
+      "bbox": [
+        182.85,
+        513.97,
+        484.07,
+        713.29
+      ]
+    },
+    {
+      "catalog_code": "110",
+      "section_name": "Trimming imperfections",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 5,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\110\\110_p05_02.png",
+      "bbox": [
+        534.3,
+        513.97,
+        845.69,
+        705.36
+      ]
+    },
+    {
+      "catalog_code": "111",
+      "section_name": "Single belt",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 5,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\111\\111_p05_01.png",
+      "bbox": [
+        170.24,
+        804.81,
+        473.9,
+        1017.56
+      ]
+    },
+    {
+      "catalog_code": "111",
+      "section_name": "Single belt",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 5,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\111\\111_p05_02.png",
+      "bbox": [
+        538.98,
+        796.88,
+        852.81,
+        1010.44
+      ]
+    },
+    {
+      "catalog_code": "112",
+      "section_name": "Parallel Belt",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 5,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\112\\112_p05_01.png",
+      "bbox": [
+        165.56,
+        1114.78,
+        464.34,
+        1300.68
+      ]
+    },
+    {
+      "catalog_code": "112",
+      "section_name": "Parallel Belt",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 5,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\112\\112_p05_02.png",
+      "bbox": [
+        532.68,
+        1116.2,
+        830.85,
+        1304.95
+      ]
+    },
+    {
+      "catalog_code": "113",
+      "section_name": "Segment to segment radial step off",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 6,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\113\\113_p06_01.png",
+      "bbox": [
+        166.98,
+        345.97,
+        388.27,
+        449.9
+      ]
+    },
+    {
+      "catalog_code": "113",
+      "section_name": "Segment to segment radial step off",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 6,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\113\\113_p06_02.png",
+      "bbox": [
+        571.12,
+        343.12,
+        803.39,
+        448.48
+      ]
+    },
+    {
+      "catalog_code": "114",
+      "section_name": "Segment to segment lateral step off",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 6,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\114\\114_p06_01.png",
+      "bbox": [
+        166.98,
+        529.22,
+        425.9,
+        712.88
+      ]
+    },
+    {
+      "catalog_code": "114",
+      "section_name": "Segment to segment lateral step off",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 6,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\114\\114_p06_02.png",
+      "bbox": [
+        533.49,
+        527.8,
+        803.39,
+        712.27
+      ]
+    },
+    {
+      "catalog_code": "116",
+      "section_name": "Package off",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 6,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\116\\116_p06_01.png",
+      "bbox": [
+        179.59,
+        1098.31,
+        454.98,
+        1293.36
+      ]
+    },
+    {
+      "catalog_code": "116",
+      "section_name": "Package off",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 6,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\116\\116_p06_02.png",
+      "bbox": [
+        568.07,
+        1098.92,
+        870.92,
+        1296.21
+      ]
+    },
+    {
+      "catalog_code": "115",
+      "section_name": "Mold step off in two piece mold",
+      "side": "tread",
+      "image_order": 1,
+      "page_no": 6,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\115\\115_p06_01.png",
+      "bbox": [
+        175.73,
+        817.83,
+        443.19,
+        1004.34
+      ]
+    },
+    {
+      "catalog_code": "115",
+      "section_name": "Mold step off in two piece mold",
+      "side": "tread",
+      "image_order": 2,
+      "page_no": 6,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\115\\115_p06_02.png",
+      "bbox": [
+        533.49,
+        816.41,
+        811.32,
+        1007.19
+      ]
+    },
+    {
+      "catalog_code": "203",
+      "section_name": "Segment to SW flash (circumferential flash)",
+      "side": "shoulder",
+      "image_order": 1,
+      "page_no": 7,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\203\\203_p07_01.png",
+      "bbox": [
+        165.56,
+        1092.62,
+        458.85,
+        1299.87
+      ]
+    },
+    {
+      "catalog_code": "203",
+      "section_name": "Segment to SW flash (circumferential flash)",
+      "side": "shoulder",
+      "image_order": 2,
+      "page_no": 7,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\203\\203_p07_02.png",
+      "bbox": [
+        558.51,
+        1094.85,
+        858.31,
+        1300.48
+      ]
+    },
+    {
+      "catalog_code": "201",
+      "section_name": "Shoulder blister",
+      "side": "shoulder",
+      "image_order": 1,
+      "page_no": 7,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\201\\201_p07_01.png",
+      "bbox": [
+        165.56,
+        464.14,
+        443.19,
+        661.22
+      ]
+    },
+    {
+      "catalog_code": "201",
+      "section_name": "Shoulder blister",
+      "side": "shoulder",
+      "image_order": 2,
+      "page_no": 7,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\201\\201_p07_02.png",
+      "bbox": [
+        545.29,
+        461.29,
+        820.68,
+        649.83
+      ]
+    },
+    {
+      "catalog_code": "202",
+      "section_name": "Shoulder lightness/ crack",
+      "side": "shoulder",
+      "image_order": 1,
+      "page_no": 7,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\202\\202_p07_01.png",
+      "bbox": [
+        166.98,
+        766.58,
+        450.3,
+        960.21
+      ]
+    },
+    {
+      "catalog_code": "202",
+      "section_name": "Shoulder lightness/ crack",
+      "side": "shoulder",
+      "image_order": 2,
+      "page_no": 7,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\202\\202_p07_02.png",
+      "bbox": [
+        559.32,
+        768.01,
+        841.01,
+        959.6
+      ]
+    },
+    {
+      "catalog_code": "207",
+      "section_name": "Loose cord through shoulder",
+      "side": "shoulder",
+      "image_order": 1,
+      "page_no": 8,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\207\\207_p08_01.png",
+      "bbox": [
+        166.98,
+        582.51,
+        428.34,
+        758.24
+      ]
+    },
+    {
+      "catalog_code": "207",
+      "section_name": "Loose cord through shoulder",
+      "side": "shoulder",
+      "image_order": 2,
+      "page_no": 8,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\207\\207_p08_02.png",
+      "bbox": [
+        533.49,
+        578.85,
+        788.54,
+        753.36
+      ]
+    },
+    {
+      "catalog_code": "204",
+      "section_name": "Shoulder step off",
+      "side": "shoulder",
+      "image_order": 1,
+      "page_no": 8,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\204\\204_p08_01.png",
+      "bbox": [
+        171.05,
+        363.26,
+        419.59,
+        533.49
+      ]
+    },
+    {
+      "catalog_code": "302",
+      "section_name": "Sidewall lightness",
+      "side": "sidewall",
+      "image_order": 1,
+      "page_no": 8,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\302\\302_p08_01.png",
+      "bbox": [
+        179.59,
+        1168.89,
+        391.52,
+        1317.77
+      ]
+    },
+    {
+      "catalog_code": "302",
+      "section_name": "Sidewall lightness",
+      "side": "sidewall",
+      "image_order": 2,
+      "page_no": 8,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\302\\302_p08_02.png",
+      "bbox": [
+        593.9,
+        1168.27,
+        802.58,
+        1309.83
+      ]
+    },
+    {
+      "catalog_code": "301",
+      "section_name": "Sidewall blister",
+      "side": "sidewall",
+      "image_order": 1,
+      "page_no": 8,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\301\\301_p08_01.png",
+      "bbox": [
+        166.98,
+        862.98,
+        395.39,
+        1023.05
+      ]
+    },
+    {
+      "catalog_code": "301",
+      "section_name": "Sidewall blister",
+      "side": "sidewall",
+      "image_order": 2,
+      "page_no": 8,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\301\\301_p08_02.png",
+      "bbox": [
+        545.29,
+        863.6,
+        768.21,
+        1015.94
+      ]
+    },
+    {
+      "catalog_code": "204",
+      "section_name": "Shoulder step off",
+      "side": "shoulder",
+      "image_order": 2,
+      "page_no": 8,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\204\\204_p08_02.png",
+      "bbox": [
+        538.17,
+        364.32,
+        781.42,
+        530.41
+      ]
+    },
+    {
+      "catalog_code": "304",
+      "section_name": "Insert misalignment",
+      "side": "sidewall",
+      "image_order": 1,
+      "page_no": 9,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\304\\304_p09_01.png",
+      "bbox": [
+        165.56,
+        615.67,
+        440.95,
+        811.33
+      ]
+    },
+    {
+      "catalog_code": "304",
+      "section_name": "Insert misalignment",
+      "side": "sidewall",
+      "image_order": 2,
+      "page_no": 9,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\304\\304_p09_02.png",
+      "bbox": [
+        541.42,
+        614.24,
+        830.84,
+        812.75
+      ]
+    },
+    {
+      "catalog_code": "305",
+      "section_name": "Wrong insert",
+      "side": "sidewall",
+      "image_order": 1,
+      "page_no": 9,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\305\\305_p09_01.png",
+      "bbox": [
+        165.56,
+        869.08,
+        435.46,
+        1058.44
+      ]
+    },
+    {
+      "catalog_code": "303",
+      "section_name": "Insert flash",
+      "side": "sidewall",
+      "image_order": 1,
+      "page_no": 9,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\303\\303_p09_01.png",
+      "bbox": [
+        167.8,
+        366.91,
+        380.55,
+        518.44
+      ]
+    },
+    {
+      "catalog_code": "305",
+      "section_name": "Wrong insert",
+      "side": "sidewall",
+      "image_order": 2,
+      "page_no": 9,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\305\\305_p09_02.png",
+      "bbox": [
+        553.02,
+        866.85,
+        830.04,
+        1054.78
+      ]
+    },
+    {
+      "catalog_code": "303",
+      "section_name": "Insert flash",
+      "side": "sidewall",
+      "image_order": 2,
+      "page_no": 9,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\303\\303_p09_02.png",
+      "bbox": [
+        590.03,
+        368.34,
+        809.69,
+        517.83
+      ]
+    },
+    {
+      "catalog_code": "306",
+      "section_name": "Missing insert",
+      "side": "sidewall",
+      "image_order": 1,
+      "page_no": 9,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\306\\306_p09_01.png",
+      "bbox": [
+        166.37,
+        1113.97,
+        440.95,
+        1311.05
+      ]
+    },
+    {
+      "catalog_code": "306",
+      "section_name": "Missing insert",
+      "side": "sidewall",
+      "image_order": 2,
+      "page_no": 9,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\306\\306_p09_02.png",
+      "bbox": [
+        564.81,
+        1112.55,
+        853.62,
+        1309.63
+      ]
+    },
+    {
+      "catalog_code": "309",
+      "section_name": "Pitted/ rough side wall",
+      "side": "sidewall",
+      "image_order": 1,
+      "page_no": 10,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\309\\309_p10_01.png",
+      "bbox": [
+        166.37,
+        703.13,
+        446.44,
+        898.99
+      ]
+    },
+    {
+      "catalog_code": "309",
+      "section_name": "Pitted/ rough side wall",
+      "side": "sidewall",
+      "image_order": 2,
+      "page_no": 10,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\309\\309_p10_02.png",
+      "bbox": [
+        581.29,
+        703.12,
+        865.43,
+        896.75
+      ]
+    },
+    {
+      "catalog_code": "308",
+      "section_name": "Sidewall splice imperfections",
+      "side": "sidewall",
+      "image_order": 1,
+      "page_no": 10,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\308\\308_p10_01.png",
+      "bbox": [
+        171.86,
+        411.87,
+        445.62,
+        606.11
+      ]
+    },
+    {
+      "catalog_code": "308",
+      "section_name": "Sidewall splice imperfections",
+      "side": "sidewall",
+      "image_order": 2,
+      "page_no": 10,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\308\\308_p10_02.png",
+      "bbox": [
+        535.12,
+        408.21,
+        823.12,
+        605.49
+      ]
+    },
+    {
+      "catalog_code": "401",
+      "section_name": "Bead blister",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 10,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\401\\401_p10_01.png",
+      "bbox": [
+        169.42,
+        1092.41,
+        458.03,
+        1295.19
+      ]
+    },
+    {
+      "catalog_code": "401",
+      "section_name": "Bead blister",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 10,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\401\\401_p10_02.png",
+      "bbox": [
+        568.88,
+        1092.41,
+        859.93,
+        1291.73
+      ]
+    },
+    {
+      "catalog_code": "404",
+      "section_name": "Pinched bead/ toe flash",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 11,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\404\\404_p11_01.png",
+      "bbox": [
+        168.61,
+        1054.17,
+        450.3,
+        1254.92
+      ]
+    },
+    {
+      "catalog_code": "404",
+      "section_name": "Pinched bead/ toe flash",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 11,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\404\\404_p11_02.png",
+      "bbox": [
+        539.8,
+        1052.75,
+        828.61,
+        1250.65
+      ]
+    },
+    {
+      "catalog_code": "403",
+      "section_name": "Mould and bead ring parting line flash",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 11,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\403\\403_p11_01.png",
+      "bbox": [
+        167.8,
+        737.9,
+        454.99,
+        938.65
+      ]
+    },
+    {
+      "catalog_code": "403",
+      "section_name": "Mould and bead ring parting line flash",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 11,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\403\\403_p11_02.png",
+      "bbox": [
+        557.9,
+        735.06,
+        854.44,
+        938.65
+      ]
+    },
+    {
+      "catalog_code": "402",
+      "section_name": "Bead/ rim lightness",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 11,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\402\\402_p11_01.png",
+      "bbox": [
+        173.29,
+        455.19,
+        436.88,
+        644.55
+      ]
+    },
+    {
+      "catalog_code": "402",
+      "section_name": "Bead/ rim lightness",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 11,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\402\\402_p11_02.png",
+      "bbox": [
+        541.42,
+        450.91,
+        835.52,
+        652.27
+      ]
+    },
+    {
+      "catalog_code": "407",
+      "section_name": "Bare cord in bead / bead cord visible",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 12,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\407\\407_p12_01.png",
+      "bbox": [
+        165.56,
+        882.11,
+        422.85,
+        1062.92
+      ]
+    },
+    {
+      "catalog_code": "407",
+      "section_name": "Bare cord in bead / bead cord visible",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 12,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\407\\407_p12_02.png",
+      "bbox": [
+        568.07,
+        882.72,
+        830.85,
+        1063.53
+      ]
+    },
+    {
+      "catalog_code": "408",
+      "section_name": "Toe crack / bead crack",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 12,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\408\\408_p12_01.png",
+      "bbox": [
+        164.75,
+        1153.42,
+        411.06,
+        1324.27
+      ]
+    },
+    {
+      "catalog_code": "408",
+      "section_name": "Toe crack / bead crack",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 12,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\408\\408_p12_02.png",
+      "bbox": [
+        564.4,
+        1151.39,
+        773.95,
+        1330.78
+      ]
+    },
+    {
+      "catalog_code": "406",
+      "section_name": "Bent bead",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 12,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\406\\406_p12_01.png",
+      "bbox": [
+        163.93,
+        628.27,
+        425.08,
+        811.12
+      ]
+    },
+    {
+      "catalog_code": "406",
+      "section_name": "Bent bead",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 12,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\406\\406_p12_02.png",
+      "bbox": [
+        560.95,
+        626.85,
+        828.61,
+        811.12
+      ]
+    },
+    {
+      "catalog_code": "405",
+      "section_name": "Hollow Bead Imperfection",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 12,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\405\\405_p12_01.png",
+      "bbox": [
+        119.19,
+        362.45,
+        531.05,
+        504.82
+      ]
+    },
+    {
+      "catalog_code": "405",
+      "section_name": "Hollow Bead Imperfection",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 12,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\405\\405_p12_02.png",
+      "bbox": [
+        736.68,
+        369.56,
+        901.43,
+        533.29
+      ]
+    },
+    {
+      "catalog_code": "409",
+      "section_name": "Dent and pimple in bead ring",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 13,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\409\\409_p13_01.png",
+      "bbox": [
+        170.24,
+        377.09,
+        410.24,
+        540.82
+      ]
+    },
+    {
+      "catalog_code": "409",
+      "section_name": "Dent and pimple in bead ring",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 13,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\409\\409_p13_02.png",
+      "bbox": [
+        633.15,
+        377.09,
+        869.29,
+        537.36
+      ]
+    },
+    {
+      "catalog_code": "411",
+      "section_name": "Trapped bead/ Loaded on bladder",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 13,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\411\\411_p13_01.png",
+      "bbox": [
+        165.56,
+        834.51,
+        423.66,
+        1016.75
+      ]
+    },
+    {
+      "catalog_code": "411",
+      "section_name": "Trapped bead/ Loaded on bladder",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 13,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\411\\411_p13_02.png",
+      "bbox": [
+        536.54,
+        828.81,
+        812.13,
+        1017.56
+      ]
+    },
+    {
+      "catalog_code": "412",
+      "section_name": "Barcode imperfections",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 13,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\412\\412_p13_01.png",
+      "bbox": [
+        166.98,
+        1141.23,
+        417.35,
+        1317.77
+      ]
+    },
+    {
+      "catalog_code": "412",
+      "section_name": "Barcode imperfections",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 13,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\412\\412_p13_02.png",
+      "bbox": [
+        565.63,
+        1144.89,
+        814.38,
+        1314.92
+      ]
+    },
+    {
+      "catalog_code": "410",
+      "section_name": "Bead step off",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 13,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\410\\410_p13_01.png",
+      "bbox": [
+        164.75,
+        604.68,
+        418.17,
+        784.07
+      ]
+    },
+    {
+      "catalog_code": "410",
+      "section_name": "Bead step off",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 13,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\410\\410_p13_02.png",
+      "bbox": [
+        582.1,
+        601.02,
+        847.32,
+        781.22
+      ]
+    },
+    {
+      "catalog_code": "502",
+      "section_name": "Ply blister, shoulder and tread area",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 14,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\502\\502_p14_01.png",
+      "bbox": [
+        163.93,
+        1144.48,
+        419.59,
+        1320.21
+      ]
+    },
+    {
+      "catalog_code": "502",
+      "section_name": "Ply blister, shoulder and tread area",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 14,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\502\\502_p14_02.png",
+      "bbox": [
+        535.12,
+        1140.82,
+        796.27,
+        1319.6
+      ]
+    },
+    {
+      "catalog_code": "501",
+      "section_name": "Inner liner blister",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 14,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\501\\501_p14_01.png",
+      "bbox": [
+        141.97,
+        908.14,
+        453.36,
+        1066.78
+      ]
+    },
+    {
+      "catalog_code": "501",
+      "section_name": "Inner liner blister",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 14,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\501\\501_p14_02.png",
+      "bbox": [
+        459.66,
+        906.71,
+        677.69,
+        1066.78
+      ]
+    },
+    {
+      "catalog_code": "501",
+      "section_name": "Inner liner blister",
+      "side": "innerliner",
+      "image_order": 3,
+      "page_no": 14,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\501\\501_p14_03.png",
+      "bbox": [
+        679.32,
+        908.14,
+        906.91,
+        1067.6
+      ]
+    },
+    {
+      "catalog_code": "414",
+      "section_name": "Narrow Bead",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 14,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\414\\414_p14_01.png",
+      "bbox": [
+        204.0,
+        343.94,
+        443.19,
+        508.48
+      ]
+    },
+    {
+      "catalog_code": "414",
+      "section_name": "Narrow Bead",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 14,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\414\\414_p14_02.png",
+      "bbox": [
+        585.36,
+        343.32,
+        815.19,
+        499.12
+      ]
+    },
+    {
+      "catalog_code": "415",
+      "section_name": "Round Bead",
+      "side": "bead",
+      "image_order": 1,
+      "page_no": 14,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\415\\415_p14_01.png",
+      "bbox": [
+        174.92,
+        593.7,
+        387.46,
+        742.58
+      ]
+    },
+    {
+      "catalog_code": "415",
+      "section_name": "Round Bead",
+      "side": "bead",
+      "image_order": 2,
+      "page_no": 14,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\415\\415_p14_02.png",
+      "bbox": [
+        623.59,
+        593.7,
+        832.47,
+        734.65
+      ]
+    },
+    {
+      "catalog_code": "503",
+      "section_name": "Ply blister, shoulder and tread area",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 15,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\503\\503_p15_01.png",
+      "bbox": [
+        163.93,
+        323.8,
+        441.56,
+        513.97
+      ]
+    },
+    {
+      "catalog_code": "503",
+      "section_name": "Ply blister, shoulder and tread area",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 15,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\503\\503_p15_02.png",
+      "bbox": [
+        572.75,
+        328.07,
+        841.02,
+        511.73
+      ]
+    },
+    {
+      "catalog_code": "504",
+      "section_name": "Ply blister, shoulder and tread area",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 15,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\504\\504_p15_01.png",
+      "bbox": [
+        163.12,
+        567.66,
+        434.65,
+        753.56
+      ]
+    },
+    {
+      "catalog_code": "504",
+      "section_name": "Ply blister, shoulder and tread area",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 15,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\504\\504_p15_02.png",
+      "bbox": [
+        535.12,
+        564.82,
+        805.83,
+        749.9
+      ]
+    },
+    {
+      "catalog_code": "505",
+      "section_name": "Air bridging problem/ bladder not touch",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 15,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\505\\505_p15_01.png",
+      "bbox": [
+        164.75,
+        856.27,
+        466.78,
+        1061.29
+      ]
+    },
+    {
+      "catalog_code": "505",
+      "section_name": "Air bridging problem/ bladder not touch",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 15,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\505\\505_p15_02.png",
+      "bbox": [
+        540.61,
+        849.77,
+        842.64,
+        1055.6
+      ]
+    },
+    {
+      "catalog_code": "506",
+      "section_name": "Bladder leak",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 15,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\506\\506_p15_01.png",
+      "bbox": [
+        157.63,
+        1107.47,
+        462.92,
+        1315.33
+      ]
+    },
+    {
+      "catalog_code": "506",
+      "section_name": "Bladder leak",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 15,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\506\\506_p15_02.png",
+      "bbox": [
+        538.98,
+        1108.88,
+        833.29,
+        1310.44
+      ]
+    },
+    {
+      "catalog_code": "508",
+      "section_name": "Inner liner splice imperfections",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 16,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\508\\508_p16_01.png",
+      "bbox": [
+        171.05,
+        619.94,
+        397.02,
+        773.09
+      ]
+    },
+    {
+      "catalog_code": "508",
+      "section_name": "Inner liner splice imperfections",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 16,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\508\\508_p16_02.png",
+      "bbox": [
+        599.39,
+        631.33,
+        808.07,
+        773.09
+      ]
+    },
+    {
+      "catalog_code": "507",
+      "section_name": "Cord visible through inner liner",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 16,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\507\\507_p16_01.png",
+      "bbox": [
+        171.86,
+        345.36,
+        392.13,
+        495.46
+      ]
+    },
+    {
+      "catalog_code": "507",
+      "section_name": "Cord visible through inner liner",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 16,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\507\\507_p16_02.png",
+      "bbox": [
+        536.54,
+        343.12,
+        754.78,
+        492.0
+      ]
+    },
+    {
+      "catalog_code": "510",
+      "section_name": "Inner liner crack",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 16,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\510\\510_p16_01.png",
+      "bbox": [
+        166.37,
+        1140.29,
+        425.08,
+        1315.44
+      ]
+    },
+    {
+      "catalog_code": "510",
+      "section_name": "Inner liner crack",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 16,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\510\\510_p16_02.png",
+      "bbox": [
+        551.59,
+        1136.14,
+        798.71,
+        1305.56
+      ]
+    },
+    {
+      "catalog_code": "509",
+      "section_name": "Inner liner imperfections",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 16,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\509\\509_p16_01.png",
+      "bbox": [
+        165.56,
+        924.61,
+        400.88,
+        1084.88
+      ]
+    },
+    {
+      "catalog_code": "509",
+      "section_name": "Inner liner imperfections",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 16,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\509\\509_p16_02.png",
+      "bbox": [
+        541.42,
+        925.43,
+        771.25,
+        1082.04
+      ]
+    },
+    {
+      "catalog_code": "515",
+      "section_name": "Cap ply splice imperfections",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 17,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\515\\515_p17_01.png",
+      "bbox": [
+        178.78,
+        1214.24,
+        348.2,
+        1321.63
+      ]
+    },
+    {
+      "catalog_code": "515",
+      "section_name": "Cap ply splice imperfections",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 17,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\515\\515_p17_02.png",
+      "bbox": [
+        546.1,
+        1210.58,
+        731.18,
+        1320.21
+      ]
+    },
+    {
+      "catalog_code": "512",
+      "section_name": "Ply splice imperfections",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 17,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\512\\512_p17_01.png",
+      "bbox": [
+        164.75,
+        401.69,
+        442.38,
+        591.66
+      ]
+    },
+    {
+      "catalog_code": "512",
+      "section_name": "Ply splice imperfections",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 17,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\512\\512_p17_02.png",
+      "bbox": [
+        536.54,
+        400.88,
+        808.07,
+        587.39
+      ]
+    },
+    {
+      "catalog_code": "514",
+      "section_name": "Chafer splice imperfections",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 17,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\514\\514_p17_01.png",
+      "bbox": [
+        182.85,
+        984.2,
+        349.02,
+        1097.49
+      ]
+    },
+    {
+      "catalog_code": "514",
+      "section_name": "Chafer splice imperfections",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 17,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\514\\514_p17_02.png",
+      "bbox": [
+        540.61,
+        984.21,
+        698.24,
+        1091.8
+      ]
+    },
+    {
+      "catalog_code": "513",
+      "section_name": "Ply split/ split fabric",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 17,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\513\\513_p17_01.png",
+      "bbox": [
+        163.93,
+        683.19,
+        424.47,
+        864.0
+      ]
+    },
+    {
+      "catalog_code": "513",
+      "section_name": "Ply split/ split fabric",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 17,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\513\\513_p17_02.png",
+      "bbox": [
+        538.98,
+        682.38,
+        801.76,
+        861.16
+      ]
+    },
+    {
+      "catalog_code": "518",
+      "section_name": "Material fold (cap ply/ cap strip/ ply/ inner liner)",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 18,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\518\\518_p18_01.png",
+      "bbox": [
+        163.93,
+        860.55,
+        429.96,
+        1042.78
+      ]
+    },
+    {
+      "catalog_code": "519",
+      "section_name": "Reverse hump",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 18,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\519\\519_p18_01.png",
+      "bbox": [
+        162.31,
+        1130.24,
+        428.34,
+        1311.87
+      ]
+    },
+    {
+      "catalog_code": "517",
+      "section_name": "Bladder fold",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 18,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\517\\517_p18_01.png",
+      "bbox": [
+        167.8,
+        583.73,
+        444.0,
+        772.27
+      ]
+    },
+    {
+      "catalog_code": "517",
+      "section_name": "Bladder fold",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 18,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\517\\517_p18_02.png",
+      "bbox": [
+        537.36,
+        581.5,
+        819.05,
+        773.7
+      ]
+    },
+    {
+      "catalog_code": "519",
+      "section_name": "Reverse hump",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 18,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\519\\519_p18_02.png",
+      "bbox": [
+        566.44,
+        1131.66,
+        827.8,
+        1309.02
+      ]
+    },
+    {
+      "catalog_code": "516",
+      "section_name": "Belt imperfections",
+      "side": "innerliner",
+      "image_order": 1,
+      "page_no": 18,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\516\\516_p18_01.png",
+      "bbox": [
+        163.93,
+        365.49,
+        411.05,
+        532.07
+      ]
+    },
+    {
+      "catalog_code": "516",
+      "section_name": "Belt imperfections",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 18,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\516\\516_p18_02.png",
+      "bbox": [
+        538.98,
+        363.26,
+        781.42,
+        528.41
+      ]
+    },
+    {
+      "catalog_code": "518",
+      "section_name": "Material fold (cap ply/ cap strip/ ply/ inner liner)",
+      "side": "innerliner",
+      "image_order": 2,
+      "page_no": 18,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\518\\518_p18_02.png",
+      "bbox": [
+        537.36,
+        861.16,
+        805.83,
+        1044.21
+      ]
+    },
+    {
+      "catalog_code": "601",
+      "section_name": "Double moulding",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 19,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\601\\601_p19_01.png",
+      "bbox": [
+        166.98,
+        347.8,
+        449.49,
+        539.19
+      ]
+    },
+    {
+      "catalog_code": "601",
+      "section_name": "Double moulding",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 19,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\601\\601_p19_02.png",
+      "bbox": [
+        538.17,
+        341.29,
+        814.37,
+        529.22
+      ]
+    },
+    {
+      "catalog_code": "602",
+      "section_name": "Damaged tyre during curing cycle",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 19,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\602\\602_p19_01.png",
+      "bbox": [
+        161.49,
+        593.08,
+        438.51,
+        783.05
+      ]
+    },
+    {
+      "catalog_code": "602",
+      "section_name": "Damaged tyre during curing cycle",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 19,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\602\\602_p19_02.png",
+      "bbox": [
+        539.8,
+        593.09,
+        811.33,
+        778.78
+      ]
+    },
+    {
+      "catalog_code": "603",
+      "section_name": "Damaged tyre during dry cycle",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 19,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\603\\603_p19_01.png",
+      "bbox": [
+        165.56,
+        839.8,
+        434.64,
+        1022.65
+      ]
+    },
+    {
+      "catalog_code": "603",
+      "section_name": "Damaged tyre during dry cycle",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 19,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\603\\603_p19_02.png",
+      "bbox": [
+        567.25,
+        836.14,
+        836.33,
+        1019.19
+      ]
+    },
+    {
+      "catalog_code": "604",
+      "section_name": "Press late open",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 19,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\604\\604_p19_01.png",
+      "bbox": [
+        183.46,
+        1125.16,
+        441.56,
+        1301.09
+      ]
+    },
+    {
+      "catalog_code": "604",
+      "section_name": "Press late open",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 19,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\604\\604_p19_02.png",
+      "bbox": [
+        542.03,
+        1122.31,
+        793.22,
+        1293.97
+      ]
+    },
+    {
+      "catalog_code": "605",
+      "section_name": "Visible under cure",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 20,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\605\\605_p20_01.png",
+      "bbox": [
+        165.56,
+        329.9,
+        463.53,
+        532.68
+      ]
+    },
+    {
+      "catalog_code": "605",
+      "section_name": "Visible under cure",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 20,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\605\\605_p20_02.png",
+      "bbox": [
+        537.36,
+        326.24,
+        838.78,
+        532.68
+      ]
+    },
+    {
+      "catalog_code": "607",
+      "section_name": "Wrong moulding",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 20,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\607\\607_p20_01.png",
+      "bbox": [
+        161.49,
+        822.1,
+        459.66,
+        1024.88
+      ]
+    },
+    {
+      "catalog_code": "607",
+      "section_name": "Wrong moulding",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 20,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\607\\607_p20_02.png",
+      "bbox": [
+        539.8,
+        818.44,
+        834.72,
+        1020.0
+      ]
+    },
+    {
+      "catalog_code": "608",
+      "section_name": "Asymmetrical tyre cured upside down",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 20,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\608\\608_p20_01.png",
+      "bbox": [
+        539.8,
+        1111.53,
+        841.83,
+        1317.16
+      ]
+    },
+    {
+      "catalog_code": "608",
+      "section_name": "Asymmetrical tyre cured upside down",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 20,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\608\\608_p20_02.png",
+      "bbox": [
+        166.98,
+        1112.14,
+        473.08,
+        1317.16
+      ]
+    },
+    {
+      "catalog_code": "606",
+      "section_name": "Curing irregularities related to the curing equipment",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 20,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\606\\606_p20_01.png",
+      "bbox": [
+        166.37,
+        586.58,
+        409.42,
+        751.73
+      ]
+    },
+    {
+      "catalog_code": "606",
+      "section_name": "Curing irregularities related to the curing equipment",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 20,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\606\\606_p20_02.png",
+      "bbox": [
+        535.93,
+        585.16,
+        773.69,
+        747.46
+      ]
+    },
+    {
+      "catalog_code": "705",
+      "section_name": "Foreign Material - lubricant",
+      "side": "foreign_material",
+      "image_order": 1,
+      "page_no": 21,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\705\\705_p21_01.png",
+      "bbox": [
+        172.47,
+        1137.76,
+        430.57,
+        1312.88
+      ]
+    },
+    {
+      "catalog_code": "705",
+      "section_name": "Foreign Material - lubricant",
+      "side": "foreign_material",
+      "image_order": 2,
+      "page_no": 21,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\705\\705_p21_02.png",
+      "bbox": [
+        548.34,
+        1132.07,
+        812.14,
+        1313.7
+      ]
+    },
+    {
+      "catalog_code": "701",
+      "section_name": "Foreign Material - Dirty Mould",
+      "side": "foreign_material",
+      "image_order": 1,
+      "page_no": 21,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\701\\701_p21_01.png",
+      "bbox": [
+        163.93,
+        827.39,
+        400.88,
+        989.7
+      ]
+    },
+    {
+      "catalog_code": "701",
+      "section_name": "Foreign Material - Dirty Mould",
+      "side": "foreign_material",
+      "image_order": 2,
+      "page_no": 21,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\701\\701_p21_02.png",
+      "bbox": [
+        540.61,
+        828.2,
+        757.83,
+        976.88
+      ]
+    },
+    {
+      "catalog_code": "609",
+      "section_name": "Tyre waviness",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 21,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\609\\609_p21_01.png",
+      "bbox": [
+        537.36,
+        327.47,
+        808.07,
+        511.94
+      ]
+    },
+    {
+      "catalog_code": "609",
+      "section_name": "Tyre waviness",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 21,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\609\\609_p21_02.png",
+      "bbox": [
+        149.29,
+        311.6,
+        468.73,
+        542.77
+      ]
+    },
+    {
+      "catalog_code": "609",
+      "section_name": "Tyre waviness",
+      "side": "curing",
+      "image_order": 3,
+      "page_no": 21,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\609\\609_p21_03.png",
+      "bbox": [
+        165.0,
+        327.11,
+        438.51,
+        512.55
+      ]
+    },
+    {
+      "catalog_code": "610",
+      "section_name": "Off standard green tyre",
+      "side": "curing",
+      "image_order": 1,
+      "page_no": 21,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\610\\610_p21_01.png",
+      "bbox": [
+        539.8,
+        581.69,
+        728.14,
+        709.83
+      ]
+    },
+    {
+      "catalog_code": "610",
+      "section_name": "Off standard green tyre",
+      "side": "curing",
+      "image_order": 2,
+      "page_no": 21,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\610\\610_p21_02.png",
+      "bbox": [
+        167.8,
+        581.7,
+        360.82,
+        712.68
+      ]
+    },
+    {
+      "catalog_code": "706",
+      "section_name": "Foreign Material - in the inner liner",
+      "side": "foreign_material",
+      "image_order": 1,
+      "page_no": 22,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\706\\706_p22_01.png",
+      "bbox": [
+        163.12,
+        566.65,
+        476.95,
+        780.21
+      ]
+    },
+    {
+      "catalog_code": "706",
+      "section_name": "Foreign Material - in the inner liner",
+      "side": "foreign_material",
+      "image_order": 2,
+      "page_no": 22,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\706\\706_p22_02.png",
+      "bbox": [
+        540.61,
+        566.65,
+        852.81,
+        780.21
+      ]
+    },
+    {
+      "catalog_code": "707",
+      "section_name": "Foreign Material - Recured rubber",
+      "side": "foreign_material",
+      "image_order": 1,
+      "page_no": 22,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\707\\707_p22_01.png",
+      "bbox": [
+        173.29,
+        997.43,
+        487.12,
+        1210.99
+      ]
+    },
+    {
+      "catalog_code": "707",
+      "section_name": "Foreign Material - Recured rubber",
+      "side": "foreign_material",
+      "image_order": 2,
+      "page_no": 22,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\707\\707_p22_02.png",
+      "bbox": [
+        535.12,
+        993.77,
+        855.26,
+        1207.33
+      ]
+    },
+    {
+      "catalog_code": "708",
+      "section_name": "Foreign Material - Various",
+      "side": "foreign_material",
+      "image_order": 1,
+      "page_no": 23,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\708\\708_p23_01.png",
+      "bbox": [
+        163.93,
+        520.27,
+        476.95,
+        733.83
+      ]
+    },
+    {
+      "catalog_code": "708",
+      "section_name": "Foreign Material - Various",
+      "side": "foreign_material",
+      "image_order": 2,
+      "page_no": 23,
+      "image_path": "C:\\Users\\Hi\\OneDrive - radometech.com\\Desktop\\Apollo_Vit_App\\media\\osc_catalog\\rev03\\708\\708_p23_02.png",
+      "bbox": [
+        538.98,
+        516.61,
+        852.0,
+        730.17
+      ]
+    }
+  ],
+  "notes": "Auto-parsed from SOP PDF. Review generated JSON once before production use."
+}

@@ -1,4 +1,4 @@
-# standalone_lucid_plc_software_ffc_raw_corrected.py
+# standalone_lucid_plc_software_ffc_raw_corrected_fast_stream.py
 # ============================================================
 # Lucid line-scan multi-camera capture with PLC SOFTWARE trigger
 # + Software Flat Field Correction (FFC)
@@ -8,6 +8,7 @@
 #   - Bead trigger       : PLC DB74.DBX86.0
 #   - Camera trigger     : TriggerSoftware after PLC rising edge
 #   - Captures 42000 height image using 3 chunks of 14000
+#   - Keeps stream open permanently; uses AcquisitionStop + fast stale-buffer drain
 #   - Saves BOTH:
 #       1) raw 16-bit PNG image
 #       2) software FFC corrected 16-bit PNG image
@@ -51,8 +52,8 @@ from arena_api.system import system
 from arena_api.buffer import BufferFactory
 
 try:
-    import snap7 # type: ignore
-    from snap7.util import get_bool # type: ignore
+    import snap7
+    from snap7.util import get_bool
 except Exception:
     snap7 = None
     get_bool = None
@@ -121,22 +122,22 @@ PACKET_SIZE = 9000
 PACKET_DELAY = 1000
 
 TRIGGER_ACTIVATION = "RisingEdge"
-AFTER_TRIGGER_DELAY_SEC = 0.02
+AFTER_TRIGGER_DELAY_SEC = 0.0
 
 # Normal reset timing for 4K cameras.
-AFTER_ACQ_STOP_DELAY_SEC = 0.15
-AFTER_STOP_STREAM_DELAY_SEC = 0.20
-AFTER_START_STREAM_DELAY_SEC = 0.25
+AFTER_ACQ_STOP_DELAY_SEC = 0.01
+AFTER_STOP_STREAM_DELAY_SEC = 0.0
+AFTER_START_STREAM_DELAY_SEC = 0.0
 
-FLUSH_COUNT = 16
+FLUSH_COUNT = 8
 
 # Shared inner/bead camera timing fix.
 SHARED_INNER_BEAD_SERIAL = "250500042"
 
-FAST_RESET_SHARED_CAMERA = False
-FAST_RESET_SLEEP_SEC = 0.02
-FAST_FLUSH_COUNT = 4
-FAST_FLUSH_TIMEOUT_MS = 5
+FAST_RESET_SHARED_CAMERA = True
+FAST_RESET_SLEEP_SEC = 0.01
+FAST_FLUSH_COUNT = 8
+FAST_FLUSH_TIMEOUT_MS = 2
 
 # If bead TriggerSoftware happens later than this after PLC edge,
 # log will show LATE_TRIGGER.
@@ -466,6 +467,30 @@ def flush_buffers(camera, cam_name: str, max_count: int = FLUSH_COUNT, timeout_m
 
     return flushed
 
+
+def drain_stale_buffers_fast(camera, cam_name: str, max_count: int = 16, timeout_ms: int = 1, log_it: bool = True) -> int:
+    """
+    Drain already-queued/stale stream buffers without restarting stream.
+
+    This is the production-safe replacement for stop_stream/start_stream per cycle.
+    It protects against old buffers while keeping stream allocation and transport active.
+    Use only very small timeout values so this never becomes a latency source.
+    """
+    drained = 0
+
+    for _ in range(max_count):
+        try:
+            buf = camera.get_buffer(timeout=timeout_ms)
+            camera.requeue_buffer(buf)
+            drained += 1
+        except Exception:
+            break
+
+    if log_it and drained > 0:
+        log(f"[{cam_name}] STALE_DRAIN drained={drained}")
+
+    return drained
+
 def get_buffer_interruptible(camera, role_tag: str, total_timeout_ms: int = BUFFER_TIMEOUT_MS):
     """
     Arena get_buffer with one huge timeout can make Ctrl+C stuck.
@@ -779,14 +804,15 @@ def get_stream_buffer_count(info: Dict[str, Any]) -> int:
 
 def reset_acquisition_for_next_cycle(camera, info: Dict[str, Any], role_name: Optional[str] = None) -> None:
     """
-    For TriggerSelector=AcquisitionStart:
-    After capture, stop acquisition so next TriggerSoftware can start fresh.
+    Software-trigger production reset.
 
-    For shared inner/bead serial 250500042:
-        AcquisitionStop -> small sleep -> small flush
+    Important change:
+    - Do NOT stop_stream/start_stream after every cycle.
+    - Keep stream open permanently.
+    - Stop only acquisition, then do a very fast stale-buffer drain.
 
-    Do not stop_stream/start_stream for this shared camera,
-    because bead trigger comes quickly.
+    This avoids the 0.5-1.0 sec delay caused by repeated transport-layer restart,
+    while still protecting the next cycle from old queued buffers.
     """
     nodemap = camera.nodemap
     cam_name = info["cam_name"]
@@ -798,52 +824,27 @@ def reset_acquisition_for_next_cycle(camera, info: Dict[str, Any], role_name: Op
 
     reset_start = time.perf_counter()
 
-    execute_node(nodemap, "AcquisitionStop")
+    ok = execute_node(nodemap, "AcquisitionStop")
+    if not ok:
+        raise RuntimeError(f"[{role_tag}] AcquisitionStop failed serial={serial}")
 
-    if FAST_RESET_SHARED_CAMERA and serial == SHARED_INNER_BEAD_SERIAL:
-        time.sleep(FAST_RESET_SLEEP_SEC)
+    # Small settling only. Do not use random long sleep here.
+    time.sleep(FAST_RESET_SLEEP_SEC)
 
-        flushed = flush_buffers(
-            camera,
-            cam_name,
-            max_count=FAST_FLUSH_COUNT,
-            timeout_ms=FAST_FLUSH_TIMEOUT_MS,
-            log_it=False,
-        )
-
-        reset_ms = (time.perf_counter() - reset_start) * 1000.0
-
-        log(
-            f"[{role_tag}] CAMERA_READY serial={serial} "
-            f"fast_reset_ms={reset_ms:.1f} flushed={flushed}"
-        )
-        return
-
-    time.sleep(AFTER_ACQ_STOP_DELAY_SEC)
-
-    try:
-        camera.stop_stream()
-    except Exception as e:
-        log(f"[{role_tag}] stop_stream warning: {e}")
-
-    time.sleep(AFTER_STOP_STREAM_DELAY_SEC)
-
-    try:
-        camera.start_stream(get_stream_buffer_count(info))
-    except Exception as e:
-        log(f"[{role_tag}] start_stream warning: {e}")
-
-    time.sleep(AFTER_START_STREAM_DELAY_SEC)
-
-    flushed = flush_buffers(camera, cam_name, log_it=False)
+    flushed = drain_stale_buffers_fast(
+        camera,
+        cam_name,
+        max_count=FAST_FLUSH_COUNT,
+        timeout_ms=FAST_FLUSH_TIMEOUT_MS,
+        log_it=False,
+    )
 
     reset_ms = (time.perf_counter() - reset_start) * 1000.0
 
     log(
         f"[{role_tag}] CAMERA_READY serial={serial} "
-        f"normal_reset_ms={reset_ms:.1f} flushed={flushed}"
+        f"software_reset_ms={reset_ms:.1f} flushed={flushed}"
     )
-
 
 def capture_one_full_image(camera, info: Dict[str, Any], task: "CaptureTask") -> None:
     nodemap = camera.nodemap
@@ -851,12 +852,35 @@ def capture_one_full_image(camera, info: Dict[str, Any], task: "CaptureTask") ->
     final_height = int(info.get("final_height", FINAL_HEIGHT))
     camera_height = int(info.get("camera_height", CAMERA_HEIGHT))
     serial = info["serial"]
+    cam_name = info["cam_name"]
 
     role_name = task.role_name
     role_tag = role_name.upper()
     image_index = task.image_index
 
+    # Allocate before TriggerSoftware so large memory allocation does not happen
+    # while the camera is already acquiring lines.
+    alloc_t0 = time.perf_counter()
+    full_img = np.zeros((final_height, width), dtype=np.uint16)
+    alloc_ms = (time.perf_counter() - alloc_t0) * 1000.0
+    if alloc_ms > 20.0:
+        log(f"[{role_tag}] ALLOC_MS={alloc_ms:.1f} serial={serial} img={image_index}")
+
+    trigger_ts = time.perf_counter()
+
     if CAPTURE_MODE in ["SOFTWARE", "PLC_SOFTWARE"]:
+        # Fast stale-buffer drain replaces heavy stop_stream/start_stream cycle reset.
+        # This prevents old-buffer capture while keeping transport stream permanently open.
+        drain_t0 = time.perf_counter()
+        drained = drain_stale_buffers_fast(
+            camera,
+            cam_name,
+            max_count=16,
+            timeout_ms=1,
+            log_it=False,
+        )
+        drain_ms = (time.perf_counter() - drain_t0) * 1000.0
+
         trigger_before = time.perf_counter()
         delay_from_plc_ms = (trigger_before - task.plc_edge_ts) * 1000.0
 
@@ -865,31 +889,52 @@ def capture_one_full_image(camera, info: Dict[str, Any], task: "CaptureTask") ->
             late_msg = " LATE_TRIGGER"
 
         log(
-            f"[{role_tag}] TRIGGER_SOFTWARE serial={serial} "
-            f"img={image_index} plc_to_trigger_ms={delay_from_plc_ms:.1f}{late_msg}"
+            f"[{role_tag}] PRE_TRIGGER_READY serial={serial} img={image_index} "
+            f"plc_to_trigger_ms={delay_from_plc_ms:.1f} "
+            f"drained={drained} drain_ms={drain_ms:.1f}{late_msg}"
         )
 
-        execute_node(nodemap, "TriggerSoftware")
-        time.sleep(AFTER_TRIGGER_DELAY_SEC)
+        trigger_exec_t0 = time.perf_counter()
+        ok = execute_node(nodemap, "TriggerSoftware")
+        trigger_exec_ms = (time.perf_counter() - trigger_exec_t0) * 1000.0
+        trigger_ts = time.perf_counter()
+
+        if not ok:
+            raise RuntimeError(f"[{role_tag}] TriggerSoftware failed serial={serial}")
+
+        log(
+            f"[{role_tag}] TRIGGER_SOFTWARE_DONE serial={serial} "
+            f"img={image_index} trigger_exec_ms={trigger_exec_ms:.2f}"
+        )
 
     elif CAPTURE_MODE == "FREE":
         log(f"[{role_tag}] FREE_CAPTURE serial={serial} img={image_index}")
+        trigger_ts = time.perf_counter()
 
     else:
         raise RuntimeError(f"Unsupported CAPTURE_MODE: {CAPTURE_MODE}")
-
-    full_img = np.zeros((final_height, width), dtype=np.uint16)
 
     current_row = 0
     chunk_id = 0
     expected_chunks = int(np.ceil(final_height / camera_height))
     start_time = time.perf_counter()
+    first_buffer = True
 
     while current_row < final_height:
         if shutdown_event.is_set():
             raise RuntimeError(f"[{role_tag}] stop requested before buffer capture")
 
+        get_t0 = time.perf_counter()
         buffer = get_buffer_interruptible(camera, role_tag, BUFFER_TIMEOUT_MS)
+        get_ms = (time.perf_counter() - get_t0) * 1000.0
+
+        if first_buffer:
+            first_buffer_from_trigger_ms = (time.perf_counter() - trigger_ts) * 1000.0
+            log(
+                f"[{role_tag}] FIRST_BUFFER serial={serial} img={image_index} "
+                f"wait_ms={get_ms:.1f} from_trigger_ms={first_buffer_from_trigger_ms:.1f}"
+            )
+            first_buffer = False
 
         try:
             frame = convert_buffer(buffer)
@@ -909,7 +954,7 @@ def capture_one_full_image(camera, info: Dict[str, Any], task: "CaptureTask") ->
 
         log(
             f"[{role_tag}] CHUNK {chunk_id}/{expected_chunks} "
-            f"rows={current_row}/{final_height}"
+            f"rows={current_row}/{final_height} get_ms={get_ms:.1f}"
         )
 
     elapsed = time.perf_counter() - start_time
@@ -920,8 +965,13 @@ def capture_one_full_image(camera, info: Dict[str, Any], task: "CaptureTask") ->
     )
 
     # Save raw + FFC corrected image in background.
-    # Queue may block if disk saving is slow, which is safer for RAM.
+    # Measure blocking because if this queue is full, it delays next trigger readiness.
+    put_t0 = time.perf_counter()
     save_queue.put((role_name, serial, image_index, full_img, dict(info)))
+    put_ms = (time.perf_counter() - put_t0) * 1000.0
+
+    if put_ms > 10.0:
+        log(f"[{role_tag}] SAVE_QUEUE_BLOCKED_MS={put_ms:.1f} serial={serial} img={image_index}")
 
     log(f"[{role_tag}] SAVE_QUEUED raw_and_ffc serial={serial} img={image_index}")
 
@@ -954,6 +1004,7 @@ class CameraActor:
         self.ready_event = threading.Event()
         self.error: Optional[Exception] = None
         self.info: Optional[Dict[str, Any]] = None
+        self.stream_started = False
 
         self.state_lock = threading.Lock()
         self.state = "STARTING"
@@ -998,18 +1049,16 @@ class CameraActor:
         return task
 
     def stop(self) -> None:
+        # Only the actor thread should own camera stream operations.
+        # Do not call camera.stop_stream() from this external thread because it can
+        # race with get_buffer()/AcquisitionStop and create RESOURCE_IN_USE states.
         try:
             self.q.put_nowait(None)
         except Exception:
             pass
 
-        try:
-            self.camera.stop_stream()
-        except Exception:
-            pass
-
         if self.thread is not None:
-            self.thread.join(timeout=3.0)
+            self.thread.join(timeout=10.0)
 
             if self.thread.is_alive():
                 log(f"[STOP] camera actor still alive serial={self.serial}")
@@ -1022,8 +1071,16 @@ class CameraActor:
                 raise RuntimeError("configure_camera returned None")
 
             self.camera.start_stream(get_stream_buffer_count(self.info))
+            self.stream_started = True
 
-            flush_buffers(self.camera, self.info["cam_name"], log_it=False)
+            # Startup drain only. After this, we keep stream open and use fast drains.
+            drain_stale_buffers_fast(
+                self.camera,
+                self.info["cam_name"],
+                max_count=16,
+                timeout_ms=2,
+                log_it=False,
+            )
 
             self.set_state("READY")
             log(f"[READY] serial={self.serial} camera_ready=True")
@@ -1089,10 +1146,11 @@ class CameraActor:
             self.ready_event.set()
 
         finally:
-            try:
-                self.camera.stop_stream()
-            except Exception:
-                pass
+            if self.stream_started:
+                try:
+                    self.camera.stop_stream()
+                except Exception as e:
+                    log(f"[STOP] stop_stream warning serial={self.serial}: {e}")
 
 
 # ============================================================
@@ -1142,6 +1200,36 @@ def wait_all_tasks(tasks, label: str, cycle: int) -> None:
         log(f"[{label}] CYCLE_DONE cycle={cycle} status=OK")
 
 
+def wait_actor_ready_before_submit(actor: "CameraActor", label: str, role_name: str, cycle: int, edge_ts: float) -> float:
+    """
+    For software trigger, never blindly queue a station trigger into a busy camera.
+    This is important for shared inner/bead camera serial 250500042.
+    Returns how long we waited for the actor to become READY.
+    """
+    if actor.is_ready():
+        return 0.0
+
+    log(
+        f"[{label}] CAMERA_NOT_READY_AT_EDGE cycle={cycle} "
+        f"serial={actor.serial} role={role_name} state={actor.state} "
+        f"queue_size={actor.q.qsize()} edge_age_ms={(time.perf_counter() - edge_ts) * 1000.0:.1f}"
+    )
+
+    wait_start = time.perf_counter()
+
+    while not shutdown_event.is_set() and not actor.is_ready():
+        time.sleep(0.001)
+
+    wait_ms = (time.perf_counter() - wait_start) * 1000.0
+
+    log(
+        f"[{label}] CAMERA_READY_AFTER_WAIT cycle={cycle} "
+        f"serial={actor.serial} role={role_name} wait_ms={wait_ms:.1f}"
+    )
+
+    return wait_ms
+
+
 # ============================================================
 # PLC CONTROLLERS
 # ============================================================
@@ -1171,6 +1259,8 @@ def main_plc_controller(main_targets) -> None:
             tasks = []
 
             for actor, role_name in main_targets:
+                wait_actor_ready_before_submit(actor, "MAIN", role_name, cycle, edge_ts)
+
                 task = actor.submit(
                     role_name,
                     "main",
@@ -1221,8 +1311,10 @@ def bead_plc_controller(bead_targets) -> None:
 
                 log(
                     f"[BEAD] EDGE_CHECK cycle={cycle} serial={actor.serial} "
-                    f"camera_ready_at_edge={ready} queue_size={actor.q.qsize()}"
+                    f"camera_ready_at_edge={ready} state={actor.state} queue_size={actor.q.qsize()}"
                 )
+
+                wait_actor_ready_before_submit(actor, "BEAD", role_name, cycle, edge_ts)
 
                 task = actor.submit(
                     role_name,

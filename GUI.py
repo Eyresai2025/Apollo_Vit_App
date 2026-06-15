@@ -1707,7 +1707,7 @@ class MainWindow(QMainWindow):
             ("Run New SKU", "run_new_sku.png", self.run_new_sku),
             ("Recipe Management", "recipe.png", self.open_recipe_management_page),
             ("Repeatability", "repeatability.png", self.open_repeatability_page),
-            ("Action Code Plan", "action_code_plan.png", self.open_action_code_plan),
+            ("OSC Page", "action_code_plan.png", self.open_action_code_plan),
             ("Dashboard", "dashboard.png", self.open_dashboard),
             ("Annotation Tool", "annotation_tool.png", self.open_annotation_tool),
 
