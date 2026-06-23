@@ -16,7 +16,6 @@ import queue
 import sys
 from pathlib import Path
 
-
 def env_str(name: str, default):
     value = os.environ.get(name)
     if value is None or str(value).strip() == "":
@@ -82,10 +81,27 @@ def main() -> None:
     cap.NUM_BEAD_IMAGES = env_int("APOLLO_NUM_BEAD_IMAGES", getattr(cap, "NUM_BEAD_IMAGES", 1))
     cap.CAMERA_HEIGHT = env_int("APOLLO_CAMERA_HEIGHT", getattr(cap, "CAMERA_HEIGHT", 14000))
     cap.FINAL_HEIGHT = env_int("APOLLO_FINAL_HEIGHT", getattr(cap, "FINAL_HEIGHT", 42000))
+    cap.CAPTURE_BUILD_MODE = env_str(
+        "APOLLO_CAPTURE_BUILD_MODE",
+        getattr(cap, "CAPTURE_BUILD_MODE", "HEIGHT_BASED"),
+    )
+
+    cap.TIME_CAPTURE_SEC = env_float(
+        "APOLLO_TIME_CAPTURE_SEC",
+        getattr(cap, "TIME_CAPTURE_SEC", 5.0),
+    )
     cap.PIXEL_FORMAT = env_str("APOLLO_PIXEL_FORMAT", getattr(cap, "PIXEL_FORMAT", "Mono16"))
     cap.NUM_STREAM_BUFFERS = env_int("APOLLO_NUM_STREAM_BUFFERS", getattr(cap, "NUM_STREAM_BUFFERS", 16))
     cap.BUFFER_TIMEOUT_MS = env_int("APOLLO_BUFFER_TIMEOUT_MS", getattr(cap, "BUFFER_TIMEOUT_MS", 30000))
     cap.PNG_COMPRESSION = env_int("APOLLO_PNG_COMPRESSION", getattr(cap, "PNG_COMPRESSION", 0))
+    cap.SAVE_AS_8BIT = env_bool(
+        "APOLLO_SAVE_AS_8BIT",
+        getattr(cap, "SAVE_AS_8BIT", True),
+    )
+    cap.SAVE_IMAGE_FORMAT = env_str(
+        "APOLLO_SAVE_IMAGE_FORMAT",
+        getattr(cap, "SAVE_IMAGE_FORMAT", "png"),
+    ).lower()
     cap.PACKET_SIZE = env_int("APOLLO_PACKET_SIZE", getattr(cap, "PACKET_SIZE", 9000))
     cap.PACKET_DELAY = env_int("APOLLO_PACKET_DELAY", getattr(cap, "PACKET_DELAY", 1000))
 
@@ -131,7 +147,18 @@ def main() -> None:
     print(f"[UI_RUNNER] NUM_FULL_IMAGES={cap.NUM_FULL_IMAGES}", flush=True)
     print(f"[UI_RUNNER] NUM_BEAD_IMAGES={cap.NUM_BEAD_IMAGES}", flush=True)
     print(f"[UI_RUNNER] FINAL_HEIGHT={cap.FINAL_HEIGHT} CAMERA_HEIGHT={cap.CAMERA_HEIGHT}", flush=True)
+    print(f"[UI_RUNNER] PIXEL_FORMAT={cap.PIXEL_FORMAT}", flush=True)
     print(f"[UI_RUNNER] FFC={cap.ENABLE_SOFTWARE_FFC} RAW={cap.SAVE_RAW_IMAGES} CORRECTED={cap.SAVE_CORRECTED_IMAGES}", flush=True)
+    print(
+        f"[UI_RUNNER] SAVE_AS_8BIT={cap.SAVE_AS_8BIT} "
+        f"SAVE_IMAGE_FORMAT={cap.SAVE_IMAGE_FORMAT}",
+        flush=True,
+    )
+    print(
+        f"[UI_RUNNER] CAPTURE_BUILD_MODE={cap.CAPTURE_BUILD_MODE} "
+        f"TIME_CAPTURE_SEC={cap.TIME_CAPTURE_SEC}",
+        flush=True,
+    )
     print(f"[UI_RUNNER] CAMERA_CONFIGS={list(cap.CAMERA_CONFIGS.keys())}", flush=True)
     print("=" * 80, flush=True)
 

@@ -9,7 +9,6 @@ import json
 import time
 import threading
 import shutil
-import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -26,8 +25,9 @@ from src.models.Pipeline import inference_pipeline_sidewall2_mahal_pca as sidewa
 from src.models.Pipeline import inference_pipeline_tread_mahal_pca as tread
 from src.models.Pipeline.yolo_patch_classifier import load_yolo_seg
 from src.COMMON.exceptions import ModelLoadError
+from src.COMMON.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, component="AI_PIPELINE")
 
 # Attempt to load optional modules with proper error handling
 build_r_detector = None
@@ -1663,6 +1663,17 @@ def run_cycle(
     tyre_name=None,
 ):
     sides_to_run = _resolve_sides(sides_to_run)
+    logger.info(
+        "AI inspection cycle started",
+        extra={
+            "event_code": "AI_CYCLE_STARTED",
+            "cycle_id": cycle_id,
+            "tyre_id": tyre_name or "-",
+            "sku_name": sku_name or "-",
+            "status": "STARTED",
+            "details": {"sides": list(sides_to_run)},
+        },
+    )
 
     cycle_dir = os.path.join(output_root, cycle_id)
     os.makedirs(cycle_dir, exist_ok=True)
@@ -1785,9 +1796,17 @@ def run_cycle(
                         message=f"Inference failed for {side_name}",
                     )
 
-                    print(
-                        f"[MAIN][ERROR] inference failed | "
-                        f"side={side_name} | error={e}"
+                    logger.exception(
+                        "Zone inference failed",
+                        extra={
+                            "event_code": "AI_ZONE_FAILED",
+                            "error_code": "AI-001",
+                            "cycle_id": cycle_id,
+                            "tyre_id": tyre_name or "-",
+                            "sku_name": sku_name or "-",
+                            "zone": side_name,
+                            "status": "FAILED",
+                        },
                     )
 
     else:
@@ -1861,10 +1880,24 @@ def run_cycle(
                 ensure_ascii=False,
             )
 
-    print(
-        f"[MAIN FINAL] {cycle_id} -> {final_tire_label} | "
-        f"cycle_time={cycle_latency_sec:.3f}s | "
-        f"stage_sum={seq_total:.3f}s | speedup={speedup}x"
+    logger.info(
+        "AI inspection cycle completed",
+        extra={
+            "event_code": "AI_CYCLE_COMPLETED",
+            "cycle_id": cycle_id,
+            "tyre_id": tyre_name or "-",
+            "sku_name": sku_name or "-",
+            "status": final_tire_label,
+            "duration_ms": round(cycle_latency_sec * 1000.0, 3),
+            "details": {
+                "stage_sum_sec": round(seq_total, 3),
+                "estimated_speedup": speedup,
+                "side_labels": {
+                    side: result.get("final_label", "UNKNOWN")
+                    for side, result in side_results.items()
+                },
+            },
+        },
     )
 
     return {

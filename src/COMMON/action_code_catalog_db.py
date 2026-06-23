@@ -16,6 +16,8 @@ try:
     from pymongo.errors import OperationFailure  # type: ignore
 except Exception:  # pragma: no cover
     OperationFailure = Exception  # type: ignore
+import os
+from pathlib import Path
 
 from src.COMMON.db import get_collection, ensure_collection, get_gridfs
 
@@ -96,6 +98,30 @@ def _drop_index_if_exists(collection, index_name: str) -> None:
         # Index cleanup must never stop the application from opening.
         pass
 
+def _safe_create_index(col, keys, name=None, **kwargs):
+    """
+    Mongo-safe index creation.
+
+    If same key already exists with different name, do not create again.
+    If same index name exists with different key, drop old named index and recreate.
+    """
+    wanted_keys = list(keys)
+
+    for idx in col.list_indexes():
+        existing_name = idx.get("name")
+        existing_keys = list(idx.get("key", {}).items())
+
+        # Same key already exists, maybe auto name:
+        # version_id_1_catalog_code_1_image_order_1
+        if existing_keys == wanted_keys:
+            return existing_name
+
+        # Same name but different key: drop and recreate
+        if name and existing_name == name and existing_keys != wanted_keys:
+            col.drop_index(existing_name)
+            break
+
+    return col.create_index(wanted_keys, name=name, **kwargs)
 
 def _create_or_replace_index(collection, keys, *, name: str, **kwargs) -> None:
     """
@@ -182,10 +208,16 @@ def ensure_action_catalog_collections() -> None:
         name="idx_version_side_active",
     )
 
-    _create_or_replace_index(
+    _safe_create_index(
         catalog_images_col(),
         [("version_id", 1), ("catalog_code", 1), ("image_order", 1)],
         name="idx_images_section",
+    )
+
+    _safe_create_index(
+        catalog_images_col(),
+        [("gridfs_file_id", 1)],
+        name="idx_catalog_images_gridfs_file_id",
     )
 
     _create_or_replace_index(
@@ -502,10 +534,24 @@ def import_catalog_payload(
             "catalog_code": str(img.get("catalog_code", "")).strip(),
             "section_name": str(img.get("section_name", "")).strip(),
             "side": str(img.get("side", infer_side_from_catalog_code(str(img.get("catalog_code", ""))))).strip(),
+            "description": img.get("description", ""),
+            "condition_code": img.get("condition_code", ""),
+            "action_code": img.get("action_code", ""),
+            "classification": img.get("classification", ""),
             "image_order": int(img.get("image_order", idx)),
             "page_no": img.get("page_no"),
+
+            # old local-path support
             "image_path": img.get("image_path"),
+
+            # new MongoDB GridFS support
+            "storage_type": img.get("storage_type", "gridfs" if img.get("gridfs_file_id") else "file"),
+            "image_name": img.get("image_name") or img.get("file_name") or os.path.basename(str(img.get("image_path") or "")),
+            "gridfs_bucket": img.get("gridfs_bucket") or "catalog_images_fs",
             "gridfs_file_id": img.get("gridfs_file_id"),
+            "content_type": img.get("content_type", "image/png"),
+            "file_size_bytes": img.get("file_size_bytes"),
+
             "bbox": img.get("bbox"),
             "active": True,
             "created_at": now,
@@ -597,6 +643,42 @@ def get_action_catalog_sections(version_id: Optional[str] = None, *, include_ima
 
     return list(grouped.values())
 
+def get_catalog_image_bytes(image_doc: Dict[str, Any]) -> Optional[bytes]:
+    """
+    Load OSC catalog image from MongoDB GridFS first.
+    Fallback: old local image_path.
+    """
+    if not image_doc:
+        return None
+
+    gridfs_file_id = image_doc.get("gridfs_file_id")
+
+    if gridfs_file_id:
+        try:
+            bucket = (
+                image_doc.get("gridfs_bucket")
+                or image_doc.get("bucket")
+                or "catalog_images_fs"
+            )
+
+            file_id = gridfs_file_id
+            if not isinstance(file_id, ObjectId):
+                file_id = ObjectId(str(file_id))
+
+            fs = get_gridfs(bucket=bucket)
+            return fs.get(file_id).read()
+
+        except Exception:
+            return None
+
+    image_path = image_doc.get("image_path")
+    if image_path and os.path.exists(str(image_path)):
+        try:
+            return Path(str(image_path)).read_bytes()
+        except Exception:
+            return None
+
+    return None
 
 def save_header(version_id: str, header_updates: Dict[str, Any], operator: str = "operator") -> None:
     version = get_version_or_current(version_id)

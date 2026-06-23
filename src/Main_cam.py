@@ -1,8 +1,8 @@
 import os
 import threading
 import time
-import logging
-logger = logging.getLogger(__name__)
+from src.COMMON.structured_logging import get_logger
+logger = get_logger(__name__, component="INSPECTION")
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable
 import traceback
@@ -294,7 +294,10 @@ class ContinuousCycleWorker(QObject):
         """
         full_msg = f"[TIMING] {msg}"
         self.status_update.emit(full_msg)
-        logger.info(full_msg)
+        logger.info(
+            full_msg,
+            extra={"event_code": "PERFORMANCE_TIMING", "operation": "inspection_cycle"},
+        )
 
     def _execute_capture(self, capture_count: int, timestamp: str) -> bool:
         if self._stop_event.is_set():
@@ -409,6 +412,17 @@ class ContinuousCycleWorker(QObject):
                 sku_name=self.sku_name,
             )
             self.status_update.emit(f" Cycle directory: {cycle_id}")
+            logger.info(
+                "Inspection cycle created",
+                extra={
+                    "event_code": "INSPECTION_CYCLE_CREATED",
+                    "cycle_id": cycle_id,
+                    "tyre_id": self.tyre_name,
+                    "sku_name": self.sku_name,
+                    "status": "CAPTURED",
+                    "details": {"capture_count": capture_count},
+                },
+            )
            
             self.status_update.emit(" Saving images...")
 
@@ -485,6 +499,17 @@ class ContinuousCycleWorker(QObject):
  
                 self.processing_completed.emit(result)
                 final_label = result.get('final_label', 'Unknown')
+                logger.info(
+                    "Inspection cycle completed",
+                    extra={
+                        "event_code": "INSPECTION_CYCLE_COMPLETED",
+                        "cycle_id": cycle_id,
+                        "tyre_id": self.tyre_name,
+                        "sku_name": self.sku_name,
+                        "status": final_label,
+                        "duration_ms": round(total_cycle_sec * 1000.0, 3),
+                    },
+                )
                 cycle_time = result.get(
                     'timing_total_from_capture_call_sec',
                     result.get('cycle_latency_sec', 0)
@@ -513,7 +538,16 @@ class ContinuousCycleWorker(QObject):
             error_msg = f"Capture cycle error: {e}"
             self.status_update.emit(f" {error_msg}")
             self.processing_error.emit(error_msg)
-            traceback.print_exc()
+            logger.exception(
+                "Inspection capture cycle failed",
+                extra={
+                    "event_code": "INSPECTION_CYCLE_FAILED",
+                    "error_code": "INSPECTION-001",
+                    "tyre_id": self.tyre_name,
+                    "sku_name": self.sku_name,
+                    "status": "FAILED",
+                },
+            )
             return False
    
     def _save_images_to_cycle(self, images: Dict[str, np.ndarray], cycle_dir: str) -> Dict[str, str]:
@@ -682,7 +716,17 @@ class ContinuousCycleWorker(QObject):
         except Exception as e:
             error_msg = f"AI pipeline error: {e}"
             self.processing_error.emit(error_msg)
-            traceback.print_exc()
+            logger.exception(
+                "AI pipeline failed",
+                extra={
+                    "event_code": "AI_PIPELINE_FAILED",
+                    "error_code": "AI-002",
+                    "cycle_id": cycle_id,
+                    "tyre_id": self.tyre_name,
+                    "sku_name": self.sku_name,
+                    "status": "FAILED",
+                },
+            )
             return None
    
     def _cleanup(self):

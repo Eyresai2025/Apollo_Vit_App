@@ -27,3 +27,13 @@ test_apollo_vit.py
 test_main_cam_mock.py
 .coverage
 test_gui_live_mock.py
+# Local configuration and generated snapshots
+.env
+.env.*
+!.env.example
+logs/
+media/validation_reports/configuration_snapshot.json
+# Local authentication database and SQLite runtime files
+data/security/*.db
+data/security/*.db-wal
+data/security/*.db-shm

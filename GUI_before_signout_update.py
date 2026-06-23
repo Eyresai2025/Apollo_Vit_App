@@ -241,8 +241,6 @@ class MainWindow(QMainWindow):
         self.security_service = get_security_service()
         self.session = session
         self._session_close_reason = "APPLICATION_EXIT"
-        self._close_authorized = False
-        self._cleanup_complete = False
         self.setWindowTitle('EyresAi QC+')
         self.back_btn = None
         screen = QGuiApplication.primaryScreen().availableGeometry()
@@ -1776,76 +1774,22 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(
             self,
             "Session expired",
-            "The session expired because there was no user activity.\n\n"
-            "You will be returned to the login page.",
+            "The session expired because there was no user activity. The application will close. "
+            "Start it again to sign in.",
         )
-        self.sign_out_requested.emit()
+        self.close()
 
-    def _inspection_is_active(self) -> bool:
-        """Return True while a live or continuous inspection worker is running."""
-        if bool(getattr(self, "is_continuous_running", False)):
-            return True
-
-        try:
-            inspection_thread = self.thread_manager.active_threads.get("inspection")
-            if inspection_thread is not None and inspection_thread.isRunning():
-                return True
-        except Exception:
-            pass
-
-        try:
-            continuous_thread = self.thread_manager.active_threads.get("continuous_cycle")
-            if continuous_thread is not None and continuous_thread.isRunning():
-                return True
-        except Exception:
-            pass
-
-        return False
-
-    def _authorize_close(self, reason: str):
-        """Allow the controller to close this window without another prompt."""
-        self._session_close_reason = str(reason or "APPLICATION_EXIT")
-        self._close_authorized = True
-
-    def logout_user(self, checked=False):
-        """
-        End only the current user session and return to the login page.
-
-        The QApplication remains running. A fresh MainWindow is created after
-        the next successful login so permissions and user-specific state cannot
-        leak between users.
-        """
-        if self._inspection_is_active():
-            QMessageBox.warning(
-                self,
-                "Inspection Active",
-                "Cannot sign out while an inspection cycle is active.\n\n"
-                "Stop or complete the inspection first.",
-            )
-            return
-
+    def logout_user(self):
         reply = QMessageBox.question(
             self,
-            "Sign Out",
-            f"Are you sure you want to sign out {self.session.user.full_name}?\n\n"
-            "Any unsaved changes will be lost.",
+            "Sign out",
+            f"Sign out {self.session.user.full_name} and close the application?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
-        if reply != QMessageBox.Yes:
-            return
-
-        self._session_close_reason = "USER_LOGOUT"
-        logger.info(
-            "User requested sign out",
-            extra={
-                "event_code": "AUTH_SIGN_OUT_REQUESTED",
-                "user_id": self.session.user.user_id,
-                "status": "REQUESTED",
-                "details": {"username": self.session.user.username},
-            },
-        )
-        self.sign_out_requested.emit()
+        if reply == QMessageBox.Yes:
+            self._session_close_reason = "USER_LOGOUT"
+            self.close()
 
     def setup_ui(self):
         central_widget = QWidget()
@@ -2602,39 +2546,11 @@ class MainWindow(QMainWindow):
         else:
             subprocess.call(["xdg-open", help_file])
     
-    def stop_server(self, checked=False):
-        """Close the complete Apollo application after confirmation."""
-        if self._inspection_is_active():
-            QMessageBox.warning(
-                self,
-                "Inspection Active",
-                "Cannot exit while an inspection cycle is active.\n\n"
-                "Stop or complete the inspection first.",
-            )
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "Exit Apollo",
-            "Are you sure you want to exit Apollo?\n\n"
-            "The application and all active connections will be closed.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        self._session_close_reason = "APPLICATION_EXIT"
-        logger.info(
-            "Application exit requested",
-            extra={
-                "event_code": "APPLICATION_EXIT_REQUESTED",
-                "user_id": self.session.user.user_id,
-                "status": "REQUESTED",
-                "details": {"username": self.session.user.username},
-            },
-        )
-        self.application_exit_requested.emit()
+    def stop_server(self):
+        reply = QMessageBox.question(self, 'Exit', 'Are you sure you want to exit?',
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.close()
     
     @permission_required(Permission.OSC_MANAGE)
     def open_action_code_plan(self):
@@ -2647,59 +2563,8 @@ class MainWindow(QMainWindow):
     
 
     def closeEvent(self, event):
-        """
-        Cleanly close one authenticated MainWindow.
-
-        A normal title-bar close is treated as an application-exit request.
-        Controller-initiated closes are authorised first to avoid duplicate
-        confirmation dialogs.
-        """
-        if not self._close_authorized:
-            if self._inspection_is_active():
-                QMessageBox.warning(
-                    self,
-                    "Inspection Active",
-                    "Cannot exit while an inspection cycle is active.\n\n"
-                    "Stop or complete the inspection first.",
-                )
-                event.ignore()
-                return
-
-            reply = QMessageBox.question(
-                self,
-                "Exit Apollo",
-                "Are you sure you want to exit Apollo?\n\n"
-                "The application and all active connections will be closed.",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
-                event.ignore()
-                return
-
-            self._session_close_reason = "WINDOW_CLOSE"
-            event.ignore()
-            QTimer.singleShot(0, self.application_exit_requested.emit)
-            return
-
-        if self._cleanup_complete:
-            event.accept()
-            return
-
-        logger.info(
-            "Main window closing - cleaning up resources",
-            extra={
-                "event_code": "MAIN_WINDOW_CLOSING",
-                "user_id": self.session.user.user_id,
-                "status": self._session_close_reason,
-            },
-        )
-
+        logger.info("Application closing - cleaning up...")
         try:
-            app_instance = QApplication.instance()
-            if app_instance is not None:
-                app_instance.removeEventFilter(self)
-
             self.stop_continuous_inspection()
 
             try:
@@ -2709,34 +2574,17 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.warning(f"[DEVICE PAGE] close cleanup failed: {e}")
 
-            for timer_name in (
-                "update_timer",
-                "update_label_timer",
-                "update_images_timer",
-                "copy_timer",
-                "_freeze_monitor",
-                "session_timer",
-                "health_timer",
-                "live_progress_timer",
-            ):
-                timer = getattr(self, timer_name, None)
-                if timer is not None:
-                    try:
-                        timer.stop()
-                    except Exception:
-                        pass
-
+            self.update_timer.stop()
+            self.update_label_timer.stop()
+            self.update_images_timer.stop()
+            self.copy_timer.stop()
+            self._freeze_monitor.stop()
+            if hasattr(self, "session_timer"):
+                self.session_timer.stop()
             self.thread_manager.stop_all(timeout=3000)
 
         except Exception as e:
-            logger.exception(
-                "Main window cleanup failed",
-                extra={
-                    "event_code": "MAIN_WINDOW_CLEANUP_FAILED",
-                    "error_code": "APP-CLOSE-001",
-                    "user_id": self.session.user.user_id,
-                },
-            )
+            logger.error(f"Cleanup error: {e}")
         finally:
             try:
                 self.security_service.close_session(
@@ -2746,13 +2594,8 @@ class MainWindow(QMainWindow):
             except Exception:
                 logger.exception(
                     "Failed to close security session",
-                    extra={
-                        "event_code": "AUTH_SESSION_CLOSE_FAILED",
-                        "user_id": self.session.user.user_id,
-                    },
+                    extra={"event_code": "AUTH_SESSION_CLOSE_FAILED"},
                 )
-
-            self._cleanup_complete = True
             event.accept()
 
 # ============================================================================
@@ -2774,26 +2617,17 @@ def signal_handler(signum, frame):
     logger.info(f"Received signal {signum}, shutting down...")
     QApplication.quit()
 
-class ApolloApplicationController:
-    """
-    Owns the login window and the currently authenticated MainWindow.
+def main():
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    app = QApplication(sys.argv)
+    app.setStyle('Fusion')
+    app.aboutToQuit.connect(cleanup_camera_resources)
 
-    Sign Out:
-        closes only the current MainWindow/session and reopens login.
-
-    Exit:
-        closes the MainWindow/session and terminates QApplication.
-    """
-
-    def __init__(self, app: QApplication):
-        self.app = app
-        self.security_service = get_security_service()
-        self.main_window = None
-        self._application_exit_requested = False
-        self._login_in_progress = False
-
-    def start(self):
-        if app_config.security.enabled and self.security_service.user_count() == 0:
+    security_service = get_security_service()
+    if app_config.security.enabled:
+        if security_service.user_count() == 0:
             QMessageBox.critical(
                 None,
                 "Apollo Security Setup Required",
@@ -2810,13 +2644,19 @@ class ApolloApplicationController:
                     "status": "BLOCKED",
                 },
             )
-            self._application_exit_requested = True
-            self.app.quit()
-            return
+            shutdown_logging()
+            return 2
 
-        QTimer.singleShot(0, self.show_login)
-
-    def _create_development_session(self):
+        login_window = LoginWindow(media_path=MEDIA_PATH, service=security_service)
+        if login_window.exec_() != QDialog.Accepted or login_window.logged_in_user is None:
+            logger.info(
+                "Application login cancelled",
+                extra={"event_code": "AUTH_LOGIN_CANCELLED", "status": "CANCELLED"},
+            )
+            shutdown_logging()
+            return 0
+        session = security_service.create_session(login_window.logged_in_user)
+    else:
         development_user = UserPrincipal(
             user_id=0,
             username="development",
@@ -2826,6 +2666,7 @@ class ApolloApplicationController:
             permissions=frozenset(ALL_PERMISSIONS),
             must_change_password=False,
         )
+        session = security_service.create_session(development_user)
         logger.warning(
             "Authentication bypassed because AUTH_ENABLED=False",
             extra={
@@ -2834,134 +2675,18 @@ class ApolloApplicationController:
                 "status": "BYPASSED",
             },
         )
-        return self.security_service.create_session(development_user)
 
-    def show_login(self):
-        if self._application_exit_requested or self._login_in_progress:
-            return
-
-        self._login_in_progress = True
-        try:
-            if app_config.security.enabled:
-                login_window = LoginWindow(
-                    media_path=MEDIA_PATH,
-                    service=self.security_service,
-                )
-                result = login_window.exec_()
-
-                if (
-                    result != QDialog.Accepted
-                    or login_window.logged_in_user is None
-                ):
-                    logger.info(
-                        "Application login cancelled",
-                        extra={
-                            "event_code": "AUTH_LOGIN_CANCELLED",
-                            "status": "CANCELLED",
-                        },
-                    )
-                    self.request_application_exit()
-                    return
-
-                session = self.security_service.create_session(
-                    login_window.logged_in_user
-                )
-            else:
-                session = self._create_development_session()
-
-            self.show_main_window(session)
-
-        finally:
-            self._login_in_progress = False
-
-    def show_main_window(self, session: SessionContext):
-        if self._application_exit_requested:
-            try:
-                self.security_service.close_session(
-                    session,
-                    reason="APPLICATION_EXIT",
-                )
-            except Exception:
-                pass
-            return
-
-        self.main_window = MainWindow(session=session)
-        self.main_window.sign_out_requested.connect(self.handle_sign_out)
-        self.main_window.application_exit_requested.connect(
-            self.request_application_exit
-        )
-        self.main_window.show()
-
-    def handle_sign_out(self):
-        """
-        Close the authenticated window and return to login without stopping
-        QApplication.
-        """
-        window = self.main_window
-        if window is None:
-            QTimer.singleShot(0, self.show_login)
-            return
-
-        reason = getattr(window, "_session_close_reason", "USER_LOGOUT")
-        window._authorize_close(reason)
-        window.close()
-        window.deleteLater()
-        self.main_window = None
-
-        logger.info(
-            "Current user signed out; returning to login",
-            extra={
-                "event_code": "AUTH_RETURN_TO_LOGIN",
-                "status": reason,
-            },
-        )
-        QTimer.singleShot(0, self.show_login)
-
-    def request_application_exit(self):
-        """Close all Apollo windows and terminate the complete application."""
-        if self._application_exit_requested:
-            return
-
-        self._application_exit_requested = True
-
-        window = self.main_window
-        if window is not None:
-            reason = getattr(window, "_session_close_reason", "APPLICATION_EXIT")
-            window._authorize_close(reason)
-            window.close()
-            window.deleteLater()
-            self.main_window = None
-
-        self.app.quit()
-
-
-def main():
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-
-    # Required for Sign Out: closing MainWindow must not terminate the process
-    # before the login dialog can be displayed again.
-    app.setQuitOnLastWindowClosed(False)
-    app.aboutToQuit.connect(cleanup_camera_resources)
-
-    controller = ApolloApplicationController(app)
-    controller.start()
-
+    main_window = MainWindow(session=session)
+    main_window.show()
+    
     return_code = app.exec_()
-
     cleanup_camera_resources()
     logger.info(
         "Apollo application stopped",
-        extra={
-            "event_code": "APPLICATION_STOPPED",
-            "status": "STOPPED",
-        },
+        extra={"event_code": "APPLICATION_STOPPED", "status": "STOPPED"},
     )
     shutdown_logging()
-    return return_code
+    sys.exit(return_code)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

@@ -253,49 +253,12 @@ def resource_path(relative_path: str) -> str:
 
 def load_env(root_dir=None):
     """
-    Load .env file manually and return key-value dictionary.
+    Backward-compatible configuration dictionary.
 
-    Supports both:
-    1. Project folder path:
-       C:/Users/.../Apollo_Vit_App
-
-    2. Direct .env file path:
-       C:/Users/.../Apollo_Vit_App/.env
+    New code should use ``src.COMMON.config.get_config()`` for typed values.
+    Existing modules may continue using this function while they are migrated.
     """
-    env_vars = {}
+    from src.COMMON.config import load_legacy_env
 
-    if root_dir is not None:
-        root_dir = str(root_dir)
+    return load_legacy_env(root_dir)
 
-        # If direct .env file path is passed
-        if os.path.isfile(root_dir):
-            env_path = root_dir
-
-        # If project folder path is passed
-        else:
-            env_path = os.path.join(root_dir, ".env")
-    else:
-        env_path = resource_path(".env")
-
-    print(f"[ENV] Loading env from: {env_path}")
-
-    if not os.path.exists(env_path):
-        raise FileNotFoundError(f".env file not found: {env_path}")
-
-    with open(env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-
-            if not line or line.startswith("#"):
-                continue
-
-            if "=" not in line:
-                continue
-
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-
-            env_vars[key] = value
-
-    return env_vars

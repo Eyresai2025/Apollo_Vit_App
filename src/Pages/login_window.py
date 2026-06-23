@@ -2,6 +2,7 @@
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 from PyQt5.QtWidgets import (  # type: ignore
     QApplication, QDialog, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit,
@@ -19,7 +20,10 @@ try:
 except ImportError:
     MULTIMEDIA_AVAILABLE = False
 
-from src.COMMON.db import create_account, authenticate_user, reset_password
+from src.COMMON.security import SecurityService, UserPrincipal, get_security_service
+from src.COMMON.structured_logging import get_logger
+
+logger = get_logger(__name__, component="AUTH_UI")
 
 
 def _app_base_dir() -> Path:
@@ -63,10 +67,97 @@ class AnimatedLabel(QLabel):
         super().resizeEvent(event)
 
 
-class LoginWindow(QDialog):
-    def __init__(self, media_path=None, parent=None):
+class PasswordChangeDialog(QDialog):
+    """Force a user to replace a temporary password before entering Apollo."""
+
+    def __init__(
+        self,
+        service: SecurityService,
+        user: UserPrincipal,
+        current_password: str,
+        parent=None,
+    ):
         super().__init__(parent)
-        self.logged_in_user = None
+        self.service = service
+        self.user = user
+        self.current_password = current_password
+        self.setWindowTitle("Change Temporary Password")
+        self.setModal(True)
+        self.setMinimumWidth(460)
+        self.setStyleSheet("""
+            QDialog { background:#0F172A; }
+            QLabel { color:#E5E7EB; font:12px 'Segoe UI'; }
+            QLineEdit {
+                background:#020617; color:#F8FAFC; border:1px solid #334155;
+                border-radius:7px; padding:9px; min-height:22px;
+            }
+            QLineEdit:focus { border:1px solid #38BDF8; }
+            QPushButton {
+                background:#2563EB; color:white; border:none; border-radius:7px;
+                padding:9px 18px; font:bold 12px 'Segoe UI';
+            }
+            QPushButton:hover { background:#1D4ED8; }
+        """)
+
+        layout = QVBoxLayout(self)
+        title = QLabel("A new password is required before continuing.")
+        title.setStyleSheet("font:bold 16px 'Segoe UI'; color:#F8FAFC;")
+        layout.addWidget(title)
+
+        rule = QLabel(
+            f"Use at least {service.config.password_min_length} characters "
+            "with at least one letter and one number."
+        )
+        rule.setWordWrap(True)
+        rule.setStyleSheet("color:#94A3B8;")
+        layout.addWidget(rule)
+
+        form = QFormLayout()
+        self.new_password = QLineEdit()
+        self.new_password.setEchoMode(QLineEdit.Password)
+        self.confirm_password = QLineEdit()
+        self.confirm_password.setEchoMode(QLineEdit.Password)
+        form.addRow("New password", self.new_password)
+        form.addRow("Confirm password", self.confirm_password)
+        layout.addLayout(form)
+
+        self.save_button = QPushButton("Change Password")
+        self.save_button.clicked.connect(self._save)
+        layout.addWidget(self.save_button, alignment=Qt.AlignRight)
+
+    def _save(self, _checked=False):
+        new_password = self.new_password.text()
+        confirm = self.confirm_password.text()
+        if new_password != confirm:
+            QMessageBox.warning(self, "Password", "The passwords do not match.")
+            return
+
+        ok, message = self.service.change_password(
+            self.user,
+            self.current_password,
+            new_password,
+        )
+        if not ok:
+            QMessageBox.warning(self, "Password", message)
+            return
+
+        QMessageBox.information(self, "Password", message)
+        self.accept()
+
+
+class LoginWindow(QDialog):
+    """Original Apollo login design backed by the secure RBAC service."""
+
+    def __init__(
+        self,
+        media_path: Optional[str] = None,
+        service: Optional[SecurityService] = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.service = service or get_security_service()
+        self.logged_in_user: Optional[UserPrincipal] = None
+        self.setModal(True)
 
         base_dir = _app_base_dir()
         self.media_path = media_path or str(base_dir / "media")
@@ -108,6 +199,7 @@ class LoginWindow(QDialog):
         self.movie = None
 
         self._build_ui()
+        QTimer.singleShot(0, self.login_identifier.setFocus)
 
     def s(self, value):
         return max(1, int(value * self.ui_scale))
@@ -223,7 +315,7 @@ class LoginWindow(QDialog):
         )
         right_layout.addWidget(header)
 
-        sub = QLabel("Login or create a new account to access Apollo Smart QC+.")
+        sub = QLabel("Login to access Apollo Smart QC+. User accounts are managed by an Administrator.")
         sub.setWordWrap(True)
         sub.setStyleSheet(
             f"color: #9CA3AF; font: {self.s(12)}px 'Segoe UI';"
@@ -278,6 +370,7 @@ class LoginWindow(QDialog):
         self.login_password.setEchoMode(QLineEdit.Password)
         self.login_password.setPlaceholderText("Password")
         self._style_line_edit(self.login_password)
+        self.login_password.returnPressed.connect(self._handle_login)
 
         login_user_label = QLabel("User / Email")
         login_user_label.setStyleSheet(
@@ -301,12 +394,12 @@ class LoginWindow(QDialog):
 
         login_layout.addSpacing(self.s(8))
 
-        login_btn = QPushButton("Sign In")
-        login_btn.clicked.connect(self._handle_login)
-        login_btn.setCursor(Qt.PointingHandCursor)
-        login_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        login_btn.setFixedHeight(self.s(48))
-        login_btn.setStyleSheet(f"""
+        self.login_btn = QPushButton("Sign In")
+        self.login_btn.clicked.connect(self._handle_login)
+        self.login_btn.setCursor(Qt.PointingHandCursor)
+        self.login_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.login_btn.setFixedHeight(self.s(48))
+        self.login_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: #2563EB;
                 color: white;
@@ -320,7 +413,7 @@ class LoginWindow(QDialog):
                 background-color: #1E40AF;
             }}
         """)
-        login_layout.addWidget(login_btn)
+        login_layout.addWidget(self.login_btn)
 
         login_layout.addItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Expanding))
         tabs.addTab(login_tab, "Login")
@@ -486,181 +579,77 @@ class LoginWindow(QDialog):
             return False, "Password cannot be more than 10 characters."
         return True, ""
 
-    def _handle_login(self):
+    def _handle_login(self, _checked=False):
         identifier = self.login_identifier.text().strip()
-        password = self.login_password.text().strip()
+        password = self.login_password.text()
 
         if not identifier or not password:
             self._show_message(
                 QMessageBox.Warning,
                 "Missing Fields",
-                "Please enter username/email and password."
+                "Please enter username/email and password.",
             )
             return
 
-        ok_pwd, msg_pwd = self._check_password_rules(password)
-        if not ok_pwd:
-            self._show_message(QMessageBox.Warning, "Password Rule", msg_pwd)
+        self.login_btn.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            result = self.service.authenticate(identifier, password)
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.login_btn.setEnabled(True)
+
+        if not result.success or result.user is None:
+            self.login_password.clear()
+            self.login_password.setFocus()
+            self._show_message(QMessageBox.Critical, "Login failed", result.message)
             return
 
-        ok, msg, user = authenticate_user(identifier, password)
-        if not ok:
-            self._show_message(QMessageBox.Critical, "Login failed", msg)
-            return
+        user = result.user
+        if user.must_change_password:
+            dialog = PasswordChangeDialog(self.service, user, password, self)
+            if dialog.exec_() != QDialog.Accepted:
+                self._show_message(
+                    QMessageBox.Warning,
+                    "Password required",
+                    "You must change the temporary password before entering the application.",
+                )
+                return
+            refreshed = self.service.get_user(user.user_id)
+            if refreshed is None:
+                self._show_message(
+                    QMessageBox.Critical,
+                    "Login",
+                    "Unable to reload the updated user account.",
+                )
+                return
+            user = refreshed
 
         self.logged_in_user = user
+        logger.info(
+            "Login dialog accepted",
+            extra={
+                "event_code": "AUTH_UI_LOGIN_ACCEPTED",
+                "user_id": user.user_id,
+                "status": "SUCCESS",
+                "details": {"username": user.username, "role": user.role.value},
+            },
+        )
         self._show_message(QMessageBox.Information, "Success", "Login successful.")
         self.accept()
 
-    def _handle_signup(self):
-        full_name = self.s_fullname.text().strip()
-        username = self.s_username.text().strip()
-        email = self.s_email.text().strip()
-        pwd = self.s_password.text().strip()
-        cpwd = self.s_confirm.text().strip()
-
-        if not all([full_name, username, email, pwd, cpwd]):
-            self._show_message(
-                QMessageBox.Warning,
-                "Missing fields",
-                "Please fill all fields."
-            )
-            return
-
-        if "@" not in email or email.startswith("@") or email.endswith("@"):
-            self._show_message(
-                QMessageBox.Warning,
-                "Invalid email",
-                "Please enter a valid email address (must contain '@')."
-            )
-            return
-
-        ok_pwd, msg_pwd = self._check_password_rules(pwd)
-        if not ok_pwd:
-            self._show_message(
-                QMessageBox.Warning,
-                "Password rule",
-                msg_pwd
-            )
-            return
-
-        if pwd != cpwd:
-            self._show_message(
-                QMessageBox.Warning,
-                "Password mismatch",
-                "Passwords do not match."
-            )
-            return
-
-        ok, msg = create_account(full_name, username, email, pwd)
-        if not ok:
-            self._show_message(
-                QMessageBox.Critical,
-                "Sign Up failed",
-                msg
-            )
-            return
-
+    def _handle_signup(self, _checked=False):
         self._show_message(
             QMessageBox.Information,
-            "Account created",
-            msg
+            "Administrator-managed accounts",
+            "For security, self-sign-up is disabled. "
+            "Ask an Administrator to create your account from User Management.",
         )
 
-        self.login_identifier.setText(username)
-        self.login_password.setText(pwd)
-
-    def _open_forgot_password_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Reset password")
-        dialog.setModal(True)
-        dialog.resize(self.s(420), self.s(260))
-        dialog.setMinimumSize(self.s(360), self.s(240))
-        dialog.setStyleSheet("QDialog { background-color: #020617; color: #E5E7EB; }")
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(self.s(20), self.s(20), self.s(20), self.s(20))
-        layout.setSpacing(self.s(12))
-
-        info = QLabel("Enter your username or email and your new password.")
-        info.setWordWrap(True)
-        info.setStyleSheet(f"color:#9CA3AF; font: {self.s(12)}px 'Segoe UI';")
-        layout.addWidget(info)
-
-        form = QFormLayout()
-        form.setVerticalSpacing(self.s(10))
-        form.setHorizontalSpacing(self.s(12))
-
-        identifier_edit = QLineEdit()
-        identifier_edit.setPlaceholderText("Username or Email")
-        self._style_line_edit(identifier_edit)
-
-        new_pwd = QLineEdit()
-        new_pwd.setPlaceholderText("New password (5–10 characters)")
-        new_pwd.setEchoMode(QLineEdit.Password)
-        self._style_line_edit(new_pwd)
-
-        confirm_pwd = QLineEdit()
-        confirm_pwd.setPlaceholderText("Confirm new password")
-        confirm_pwd.setEchoMode(QLineEdit.Password)
-        self._style_line_edit(confirm_pwd)
-
-        id_lbl = QLabel("User / Email")
-        id_lbl.setStyleSheet(f"color:#E5E7EB; font: {self.s(12)}px 'Segoe UI';")
-
-        np_lbl = QLabel("New Password")
-        np_lbl.setStyleSheet(f"color:#E5E7EB; font: {self.s(12)}px 'Segoe UI';")
-
-        cp_lbl = QLabel("Confirm")
-        cp_lbl.setStyleSheet(f"color:#E5E7EB; font: {self.s(12)}px 'Segoe UI';")
-
-        form.addRow(id_lbl, identifier_edit)
-        form.addRow(np_lbl, new_pwd)
-        form.addRow(cp_lbl, confirm_pwd)
-        layout.addLayout(form)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Ok).setText("Update")
-        buttons.button(QDialogButtonBox.Cancel).setText("Cancel")
-        layout.addWidget(buttons)
-
-        def on_accept():
-            identifier = identifier_edit.text().strip()
-            p1 = new_pwd.text().strip()
-            p2 = confirm_pwd.text().strip()
-
-            if not identifier or not p1 or not p2:
-                self._show_message(
-                    QMessageBox.Warning,
-                    "Missing fields",
-                    "Please fill all fields.",
-                    parent=dialog,
-                )
-                return
-
-            ok_pwd, msg_pwd = self._check_password_rules(p1)
-            if not ok_pwd:
-                self._show_message(QMessageBox.Warning, "Password rule", msg_pwd, parent=dialog)
-                return
-
-            if p1 != p2:
-                self._show_message(
-                    QMessageBox.Warning,
-                    "Password mismatch",
-                    "Passwords do not match.",
-                    parent=dialog
-                )
-                return
-
-            ok, msg = reset_password(identifier, p1)
-            if not ok:
-                self._show_message(QMessageBox.Critical, "Error", msg, parent=dialog)
-                return
-
-            self._show_message(QMessageBox.Information, "Success", msg, parent=dialog)
-            dialog.accept()
-
-        buttons.accepted.connect(on_accept)
-        buttons.rejected.connect(dialog.reject)
-
-        dialog.exec_()
+    def _open_forgot_password_dialog(self, _link=None):
+        self._show_message(
+            QMessageBox.Information,
+            "Password reset",
+            "Password resets are managed by an Administrator. "
+            "Ask an Administrator to reset your password from User Management.",
+        )

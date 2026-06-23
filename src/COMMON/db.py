@@ -11,18 +11,20 @@ from bson import ObjectId  # type: ignore
 from gridfs import GridFS  # type: ignore
 from pymongo import MongoClient  # type: ignore
 
-from src.COMMON.common import load_env
+from src.COMMON.config import get_config
+from src.COMMON.structured_logging import get_logger
+
+logger = get_logger(__name__, component="DATABASE")
 
 
 # =========================
-# ENV / CONFIG
+# CENTRAL CONFIGURATION
 # =========================
-_env = load_env()
+_config = get_config()
 
-DB_URL: str = _env.get("DATABASE_URL", "mongodb://localhost:27017/")
-DB_NAME: str = "EyresQC_Apollo"   # <-- force same DB for everything
-
-GRIDFS_BUCKET: str = _env.get("GRIDFS_BUCKET", "fs")
+DB_URL: str = _config.database.url
+DB_NAME: str = _config.database.name
+GRIDFS_BUCKET: str = _config.database.gridfs_bucket
 
 TYRE_DETAILS_COLLECTION = "TYRE DETAILS"
 NEW_SKU_META_COLLECTION = "New SKU"
@@ -43,7 +45,26 @@ _client: Optional[MongoClient] = None
 def get_client() -> MongoClient:
     global _client
     if _client is None:
-        _client = MongoClient(DB_URL)
+        _client = MongoClient(
+            DB_URL,
+            maxPoolSize=_config.database.pool_size,
+            minPoolSize=_config.database.min_pool_size,
+            serverSelectionTimeoutMS=_config.database.timeout_ms,
+            connectTimeoutMS=_config.database.connect_timeout_ms,
+            retryWrites=_config.database.retry_writes,
+            retryReads=_config.database.retry_reads,
+        )
+        logger.info(
+            "MongoDB client initialized",
+            extra={
+                "event_code": "DB_CLIENT_INITIALIZED",
+                "details": {
+                    "database": DB_NAME,
+                    "pool_size": _config.database.pool_size,
+                    "min_pool_size": _config.database.min_pool_size,
+                },
+            },
+        )
     return _client
 
 
@@ -196,15 +217,26 @@ def recent_cycle(mydb):
                     return str(int(recent_document.get("cycle_no", 0)) + 1)
 
             except ValueError:
-                print(
-                    f"Error: Invalid date format in database: {latest_inspection_date_str}"
+                logger.error(
+                    "Invalid inspection date format in database",
+                    extra={
+                        "event_code": "DB_INVALID_INSPECTION_DATE",
+                        "error_code": "DB-001",
+                        "details": {"inspection_date": latest_inspection_date_str},
+                    },
                 )
                 return "1"
         else:
-            print("Warning: No inspectionDate found in the most recent document.")
+            logger.warning(
+                "Most recent tyre document has no inspectionDate",
+                extra={"event_code": "DB_INSPECTION_DATE_MISSING"},
+            )
             return "1"
     else:
-        print("No previous documents found. Starting new cycle.")
+        logger.info(
+            "No previous tyre documents found; starting cycle sequence at 1",
+            extra={"event_code": "DB_FIRST_CYCLE"},
+        )
         return "1"
 
 

@@ -686,7 +686,11 @@ class ManualCameraCaptureTab(QWidget):
         self.width_spin = self.make_spin(1, 100000, 4096)
         self.camera_height_spin = self.make_spin(1, 100000, 14000)
         self.final_height_spin = self.make_spin(1, 200000, 42000)
+        self.capture_build_mode_combo = QComboBox()
+        self.capture_build_mode_combo.addItems(["HEIGHT_BASED", "TIME_BASED"])
+        self.capture_build_mode_combo.setCurrentText("HEIGHT_BASED")
 
+        self.time_capture_sec_spin = self.make_double(0.1, 120.0, 5.0, 2)
         self.line_rate_spin = self.make_double(1, 200000, 8169.178266, 6)
         self.pixel_format_combo = QComboBox()
         self.pixel_format_combo.addItems(["Mono16", "Mono8"])
@@ -1110,8 +1114,29 @@ class AutoPLCFFCProcessTab(QWidget):
         self.num_main_spin.valueChanged.connect(self.num_bead_spin.setValue)
         self.camera_height_spin = self.make_spin(1, 100000, 14000)
         self.final_height_spin = self.make_spin(1, 200000, 42000)
+
+        # Capture build mode:
+        # HEIGHT_BASED = existing fixed FINAL_HEIGHT stitching
+        # TIME_BASED   = collect frames continuously for TIME_CAPTURE_SEC seconds
+        self.capture_build_mode_combo = QComboBox()
+        self.capture_build_mode_combo.addItems(["HEIGHT_BASED", "TIME_BASED"])
+        self.capture_build_mode_combo.setCurrentText("HEIGHT_BASED")
+
+        self.time_capture_sec_spin = self.make_double(0.1, 120.0, 2.0, 2)
+
         self.pixel_format_combo = QComboBox()
         self.pixel_format_combo.addItems(["Mono16", "Mono8"])
+
+        # Saved output bit depth.
+        # Camera Pixel Format controls camera capture.
+        # Output Bit Depth controls final saved raw/FFC files.
+        self.output_bit_depth_combo = QComboBox()
+        self.output_bit_depth_combo.addItems(["8-bit", "16-bit"])
+        self.output_bit_depth_combo.setCurrentText("8-bit")
+
+        self.save_format_combo = QComboBox()
+        self.save_format_combo.addItems(["PNG", "BMP"])
+        self.save_format_combo.setCurrentText("PNG")
 
         self.stream_buffers_spin = self.make_spin(1, 128, 16)
         self.buffer_timeout_spin = self.make_spin(1000, 300000, 30000)
@@ -1134,7 +1159,11 @@ class AutoPLCFFCProcessTab(QWidget):
         left.addRow("Bead Images", self.num_bead_spin)
         left.addRow("Camera/Patch Height", self.camera_height_spin)
         left.addRow("Final Stitch Height", self.final_height_spin)
+        left.addRow("Capture Build Mode", self.capture_build_mode_combo)
+        left.addRow("Time Capture sec", self.time_capture_sec_spin)
         left.addRow("Pixel Format", self.pixel_format_combo)
+        left.addRow("Output Bit Depth", self.output_bit_depth_combo)
+        left.addRow("Save Format", self.save_format_combo)
         left.addRow("Stream Buffers", self.stream_buffers_spin)
         left.addRow("Buffer Timeout ms", self.buffer_timeout_spin)
         left.addRow("Packet Size", self.packet_size_spin)
@@ -1448,7 +1477,11 @@ class AutoPLCFFCProcessTab(QWidget):
             "APOLLO_PACKET_SIZE": str(self.packet_size_spin.value()),
             "APOLLO_PACKET_DELAY": str(self.packet_delay_spin.value()),
             "APOLLO_PNG_COMPRESSION": str(self.png_compression_spin.value()),
-
+            "APOLLO_SAVE_AS_8BIT": "1" if self.output_bit_depth_combo.currentText().strip() == "8-bit" else "0",
+            "APOLLO_SAVE_IMAGE_FORMAT": self.save_format_combo.currentText().strip().lower(),
+            "APOLLO_CAPTURE_BUILD_MODE": self.capture_build_mode_combo.currentText(),
+            "APOLLO_TIME_CAPTURE_SEC": str(self.time_capture_sec_spin.value()),
+            
             "APOLLO_PLC_IP": self.plc_ip_edit.text().strip(),
             "APOLLO_PLC_RACK": str(self.plc_rack_spin.value()),
             "APOLLO_PLC_SLOT": str(self.plc_slot_spin.value()),

@@ -27,6 +27,7 @@ from src.COMMON.action_code_catalog_db import (
     save_catalog_rows,
     save_header,
     import_catalog_payload,
+    get_catalog_image_bytes,
 )
 
 try:
@@ -507,6 +508,23 @@ class ActionCodePlanPage(QWidget):
         table.setMaximumHeight(table_height)
         return table
 
+    def _pixmap_from_catalog_image(self, image_doc: Dict[str, Any]) -> QPixmap:
+        pix = QPixmap()
+
+        try:
+            data = get_catalog_image_bytes(image_doc)
+            if data:
+                pix.loadFromData(data)
+                return pix
+        except Exception:
+            pass
+
+        path = image_doc.get("image_path")
+        if path and os.path.exists(str(path)):
+            pix.load(str(path))
+
+        return pix
+    
     def create_image_gallery(self, images: List[Dict[str, Any]]) -> Optional[QFrame]:
         if not images:
             return None
@@ -519,28 +537,37 @@ class ActionCodePlanPage(QWidget):
                 border-radius: 10px;
             }
         """)
+
         outer = QVBoxLayout(frame)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(6)
 
         title = QLabel(f"Reference images ({len(images)})")
-        title.setStyleSheet("font: 700 10px 'Segoe UI'; color: #571c86; border: none; background: transparent;")
+        title.setStyleSheet("""
+            font: 700 10px 'Segoe UI';
+            color: #571c86;
+            border: none;
+            background: transparent;
+        """)
         outer.addWidget(title)
 
         grid_holder = QWidget()
         grid_holder.setStyleSheet("background: transparent; border: none;")
+
         grid = QGridLayout(grid_holder)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
 
         max_show = min(len(images), 8)
+
         for idx, img in enumerate(images[:max_show]):
-            path = img.get("image_path")
             tile = QLabel()
             tile.setMinimumSize(200, 125)
             tile.setMaximumSize(240, 150)
             tile.setAlignment(Qt.AlignCenter)
+            tile.setCursor(Qt.PointingHandCursor)
+
             tile.setStyleSheet("""
                 QLabel {
                     background: white;
@@ -550,42 +577,83 @@ class ActionCodePlanPage(QWidget):
                     padding: 3px;
                 }
             """)
-            if path and os.path.exists(path):
-                pix = QPixmap(path)
-                if not pix.isNull():
-                    tile.setPixmap(pix.scaled(QSize(228, 138), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                else:
-                    tile.setText("Image\nnot loaded")
-            else:
-                tile.setText("Image\nnot found")
+
+            # No tooltip, to avoid black hover popup.
             tile.setToolTip("")
-            if path:
-                tile.setCursor(Qt.PointingHandCursor)
-                tile.mousePressEvent = lambda event, p=path: self.open_image_popup(str(p))
+
+            # New support:
+            # 1. MongoDB GridFS image using gridfs_file_id
+            # 2. Fallback old local image_path
+            pix = self._pixmap_from_catalog_image(img)
+
+            if not pix.isNull():
+                tile.setPixmap(
+                    pix.scaled(
+                        QSize(228, 138),
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation,
+                    )
+                )
+            else:
+                tile.setText("Image\nnot loaded")
+
+            # Open popup using full image document.
+            # Popup should load from GridFS or fallback path.
+            tile.mousePressEvent = lambda event, d=dict(img): self.open_image_popup(d)
+
             grid.addWidget(tile, idx // 4, idx % 4)
 
         if len(images) > max_show:
             more = QLabel(f"+{len(images) - max_show} more images available")
-            more.setStyleSheet("font: 700 10px 'Segoe UI'; color: #571c86; border: none; background: transparent;")
+            more.setStyleSheet("""
+                font: 700 10px 'Segoe UI';
+                color: #571c86;
+                border: none;
+                background: transparent;
+            """)
             grid.addWidget(more, (max_show // 4) + 1, 0, 1, 4)
 
         outer.addWidget(grid_holder)
+
         return frame
 
 
-    def open_image_popup(self, image_path: str):
-        """Open a large preview for a clicked OSC reference image."""
-        if not image_path or not os.path.exists(image_path):
-            QMessageBox.warning(self, "Image Not Found", f"Image file not found:\n{image_path}")
-            return
+    def open_image_popup(self, image_ref):
+        pix = QPixmap()
+        title_text = "OSC Reference Image"
 
-        pix = QPixmap(image_path)
+        if isinstance(image_ref, dict):
+            title_text = str(
+                image_ref.get("image_name")
+                or image_ref.get("file_name")
+                or image_ref.get("gridfs_file_id")
+                or "OSC Reference Image"
+            )
+
+            try:
+                data = get_catalog_image_bytes(image_ref)
+                if data:
+                    pix.loadFromData(data)
+            except Exception:
+                pass
+
+        else:
+            image_path = str(image_ref or "")
+            title_text = os.path.basename(image_path)
+
+            if image_path and os.path.exists(image_path):
+                pix.load(image_path)
+
         if pix.isNull():
-            QMessageBox.warning(self, "Image Load Failed", f"Could not load image:\n{image_path}")
+            QMessageBox.warning(
+                self,
+                "Image Load Failed",
+                "Could not load OSC reference image from MongoDB/GridFS."
+            )
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle(os.path.basename(image_path))
+        dialog.setWindowTitle(title_text)
         dialog.setModal(False)
         dialog.resize(980, 720)
         dialog.setStyleSheet("""
@@ -615,7 +683,7 @@ class ActionCodePlanPage(QWidget):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        title = QLabel(os.path.basename(image_path))
+        title = QLabel(title_text)
         title.setObjectName("titleLabel")
         layout.addWidget(title)
 
@@ -627,15 +695,24 @@ class ActionCodePlanPage(QWidget):
         img_label.setObjectName("imageLabel")
         img_label.setAlignment(Qt.AlignCenter)
         img_label.setMinimumSize(900, 580)
-        img_label.setPixmap(pix.scaled(QSize(900, 580), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        img_label.setPixmap(
+            pix.scaled(
+                QSize(900, 580),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        )
+
         scroll.setWidget(img_label)
         layout.addWidget(scroll, 1)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dialog.close)
         btn_row.addWidget(close_btn)
+
         layout.addLayout(btn_row)
 
         dialog.show()

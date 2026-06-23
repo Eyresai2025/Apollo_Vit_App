@@ -107,6 +107,11 @@ NUM_BEAD_IMAGES = 1
 CAMERA_HEIGHT = 14000
 FINAL_HEIGHT = 42000
 
+# HEIGHT_BASED = present logic: capture until FINAL_HEIGHT rows
+# TIME_BASED   = capture continuously for TIME_CAPTURE_SEC seconds
+CAPTURE_BUILD_MODE = "HEIGHT_BASED"
+TIME_CAPTURE_SEC = 2.0
+
 PIXEL_FORMAT = "Mono16"
 
 NUM_STREAM_BUFFERS = 16
@@ -114,6 +119,12 @@ BUFFER_TIMEOUT_MS = 30000
 
 PNG_COMPRESSION = 0
 
+# True  = save output PNG as 8-bit single-channel
+# False = save output PNG as 16-bit single-channel
+SAVE_AS_8BIT = True
+
+# png or bmp
+SAVE_IMAGE_FORMAT = "png"
 # Keep this small because each 4K x 42000 Mono16 image is large.
 SAVE_QUEUE_SIZE = 4
 
@@ -493,14 +504,36 @@ def get_buffer_interruptible(camera, role_tag: str, total_timeout_ms: int = BUFF
 def save_uint16_png(path: Path, image: np.ndarray) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if image.dtype != np.uint16:
-        image = image.astype(np.uint16)
+    if image.ndim != 2:
+        raise RuntimeError(
+            f"Expected single-channel Mono image, got shape={image.shape}, dtype={image.dtype}"
+        )
+
+    if SAVE_AS_8BIT:
+        # Save as 8-bit single-channel PNG
+        if image.dtype != np.uint16:
+            image = image.astype(np.uint16)
+
+        save_img = (image / 256).clip(0, 255).astype(np.uint8)
+
+    else:
+        # Save as 16-bit single-channel PNG
+        if image.dtype != np.uint16:
+            save_img = image.astype(np.uint16)
+        else:
+            save_img = image
+
+    log(
+        f"[SAVE_DEBUG] path={path} "
+        f"shape={save_img.shape} dtype={save_img.dtype} ndim={save_img.ndim}"
+    )
 
     ok = cv2.imwrite(
         str(path),
-        image,
+        save_img,
         [cv2.IMWRITE_PNG_COMPRESSION, PNG_COMPRESSION],
     )
+
     return bool(ok)
 
 
@@ -845,6 +878,100 @@ def reset_acquisition_for_next_cycle(camera, info: Dict[str, Any], role_name: Op
     )
 
 
+def get_capture_dtype():
+    return np.uint8 if str(PIXEL_FORMAT).strip().lower() == "mono8" else np.uint16
+
+
+def capture_time_based_image(camera, info: Dict[str, Any], task: "CaptureTask") -> np.ndarray:
+    """
+    Time-based capture mode.
+
+    Instead of stopping after FINAL_HEIGHT rows, collect every camera buffer
+    for TIME_CAPTURE_SEC seconds and vertically stack the frames into one
+    final single-channel image. Raw/FFC/save logic remains unchanged.
+    """
+    width = int(info["width"])
+    serial = info["serial"]
+
+    role_name = task.role_name
+    role_tag = role_name.upper()
+    image_index = task.image_index
+
+    capture_sec = max(0.1, float(TIME_CAPTURE_SEC))
+    expected_dtype = get_capture_dtype()
+
+    frames = []
+    total_rows = 0
+    chunk_id = 0
+
+    start_time = time.perf_counter()
+    end_time = start_time + capture_sec
+
+    log(
+        f"[{role_tag}] TIME_CAPTURE_START serial={serial} "
+        f"img={image_index} duration_sec={capture_sec:.2f}"
+    )
+
+    while time.perf_counter() < end_time:
+        if shutdown_event.is_set():
+            raise RuntimeError(f"[{role_tag}] stop requested during time capture")
+
+        remaining_ms = int(max(1, (end_time - time.perf_counter()) * 1000.0))
+        timeout_ms = min(500, remaining_ms)
+
+        try:
+            buffer = camera.get_buffer(timeout=timeout_ms)
+        except Exception:
+            # No frame available during this small slice. Continue until time ends.
+            continue
+
+        try:
+            frame = convert_buffer(buffer)
+        finally:
+            camera.requeue_buffer(buffer)
+
+        if frame.ndim != 2:
+            raise RuntimeError(f"[{role_tag}] expected 2D frame, got shape={frame.shape}")
+
+        h, w = frame.shape
+
+        if w != width:
+            log(f"[{role_tag}] WIDTH_WARNING got={w} expected={width}")
+
+        copy_w = min(w, width)
+        frame = frame[:, :copy_w]
+
+        if frame.dtype != expected_dtype:
+            frame = frame.astype(expected_dtype, copy=False)
+
+        if copy_w < width:
+            padded = np.zeros((h, width), dtype=expected_dtype)
+            padded[:, :copy_w] = frame
+            frame = padded
+
+        frames.append(frame.copy())
+        total_rows += int(frame.shape[0])
+        chunk_id += 1
+
+        log(
+            f"[{role_tag}] TIME_CHUNK {chunk_id} "
+            f"rows_added={frame.shape[0]} total_rows={total_rows}"
+        )
+
+    if not frames:
+        raise RuntimeError(f"[{role_tag}] no frames captured in {capture_sec:.2f} sec")
+
+    full_img = np.vstack(frames).astype(expected_dtype, copy=False)
+    elapsed = time.perf_counter() - start_time
+
+    log(
+        f"[{role_tag}] TIME_STITCH_DONE serial={serial} "
+        f"img={image_index} chunks={chunk_id} rows={full_img.shape[0]} "
+        f"width={full_img.shape[1]} time={elapsed:.2f}s"
+    )
+
+    return full_img
+
 def capture_one_full_image(camera, info: Dict[str, Any], task: "CaptureTask") -> None:
     nodemap = camera.nodemap
     width = int(info["width"])
@@ -878,7 +1005,29 @@ def capture_one_full_image(camera, info: Dict[str, Any], task: "CaptureTask") ->
     else:
         raise RuntimeError(f"Unsupported CAPTURE_MODE: {CAPTURE_MODE}")
 
-    full_img = np.zeros((final_height, width), dtype=np.uint16)
+    capture_build_mode = str(CAPTURE_BUILD_MODE).strip().upper()
+
+    if capture_build_mode == "TIME_BASED":
+        full_img = capture_time_based_image(camera, info, task)
+
+        # Save raw + FFC corrected image in background.
+        # Same save worker handles raw/FFC/PNG/BMP/8-bit/16-bit.
+        save_queue.put((role_name, serial, image_index, full_img, dict(info)))
+
+        log(
+            f"[{role_tag}] SAVE_QUEUED time_based_raw_and_ffc "
+            f"serial={serial} img={image_index}"
+        )
+        return
+
+    if capture_build_mode != "HEIGHT_BASED":
+        log(
+            f"[{role_tag}] CAPTURE_BUILD_MODE_WARNING unknown={CAPTURE_BUILD_MODE}; "
+            f"using HEIGHT_BASED"
+        )
+
+    full_dtype = get_capture_dtype()
+    full_img = np.zeros((final_height, width), dtype=full_dtype)
 
     current_row = 0
     chunk_id = 0
@@ -902,7 +1051,13 @@ def capture_one_full_image(camera, info: Dict[str, Any], task: "CaptureTask") ->
             log(f"[{role_tag}] WIDTH_WARNING got={w} expected={width}")
 
         copy_h = min(h, final_height - current_row)
-        full_img[current_row:current_row + copy_h, :] = frame[:copy_h, :]
+        copy_w = min(w, width)
+
+        # Supports both Mono16 and Mono8 and protects against width mismatch.
+        full_img[
+            current_row:current_row + copy_h,
+            0:copy_w
+        ] = frame[:copy_h, :copy_w].astype(full_dtype, copy=False)
 
         current_row += copy_h
         chunk_id += 1
@@ -1329,6 +1484,14 @@ def main() -> None:
         log(
             f"[START] software_ffc={ENABLE_SOFTWARE_FFC} "
             f"target={GAIN_TARGET_MODE} gain_clip={GAIN_RANGE_MIN}-{GAIN_RANGE_MAX}"
+        )
+        log(
+            f"[START] pixel_format={PIXEL_FORMAT} save_as_8bit={SAVE_AS_8BIT} "
+            f"save_format={SAVE_IMAGE_FORMAT}"
+        )
+        log(
+            f"[START] capture_build_mode={CAPTURE_BUILD_MODE} "
+            f"time_capture_sec={TIME_CAPTURE_SEC}"
         )
         log("=" * 80)
 
